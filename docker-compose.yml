@@ -1,0 +1,7 @@
+services:
+  documentation:
+    image: ghcr.io/usiko/documentation:latest
+    container_name: documentation
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
