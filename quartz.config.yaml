@@ -6,8 +6,6 @@ configuration:
   enablePopovers: true
   analytics: null
   locale: fr-FR
-  # TODO: replace with the real domain/IP where this is self-hosted (used for the sitemap, RSS feed and CNAME)
-  baseUrl: documentation.usiko.local
   ignorePatterns:
     - private
     - templates
@@ -141,14 +139,20 @@ plugins:
   - source: "@quartz-community/content-index"
     enabled: true
     options:
-      enableSiteMap: true
-      enableRSS: true
+      # Both require an absolute baseUrl to produce valid output; skipped
+      # here since this is a private, credential-gated site with no fixed
+      # public address (accessed via LAN IP or an external domain
+      # depending on where from — see nginx/README.md).
+      enableSiteMap: false
+      enableRSS: false
   - source: "@quartz-community/favicon"
     enabled: true
   - source: "@quartz-community/og-image"
     enabled: true
   - source: "@quartz-community/cname"
-    enabled: true
+    # GitHub Pages-only (writes a `CNAME` file for custom domains) — not
+    # relevant to this Docker/nginx self-hosted setup.
+    enabled: false
   - source: "@quartz-community/canvas-page"
     enabled: true
   - source: "@quartz-community/content-page"
@@ -230,8 +234,7 @@ plugins:
     enabled: true
     options:
       links:
-        GitHub: https://github.com/jackyzha0/quartz
-        Discord Community: https://discord.gg/cRFFHYye7t
+        GitHub: https://github.com/usiko
     layout:
       position: footer
       priority: 50
