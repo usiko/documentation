@@ -9,10 +9,20 @@ COPY package-lock.json* .
 COPY .npmrc* .
 COPY quartz/ ./quartz/
 COPY quartz.lock.json* .
-RUN npm install; npx quartz plugin install
+RUN npm install && npx quartz plugin install
 
-FROM node:22-slim
-WORKDIR /usr/src/app
-COPY --from=builder /usr/src/app/ /usr/src/app/
 COPY . .
-CMD ["npx", "quartz", "build", "--serve"]
+RUN npx quartz build
+
+FROM nginx:1.27-alpine
+
+COPY --from=builder /usr/src/app/public/ /usr/share/nginx/html/
+COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
+
+# Placeholder credential file so nginx can start even before real credentials
+# are provisioned (see nginx/README.md). Empty file = no valid user = every
+# request outside the LAN allowlist gets a 401 until real credentials are
+# mounted over this path at runtime.
+RUN touch /etc/nginx/.htpasswd
+
+EXPOSE 80
