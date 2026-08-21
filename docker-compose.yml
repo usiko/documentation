@@ -1,0 +1,10 @@
+services:
+  documentation:
+    image: ghcr.io/usiko/documentation:latest
+    container_name: documentation
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    env_file:
+      - path: .env
+        required: false
