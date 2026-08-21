@@ -233,7 +233,8 @@ plugins:
   - source: "@quartz-community/footer"
     enabled: true
     options:
-      links: {}
+      links:
+        GitHub: https://github.com/usiko
     layout:
       position: footer
       priority: 50
