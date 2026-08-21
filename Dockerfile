@@ -16,13 +16,16 @@ RUN npx quartz build
 
 FROM nginx:1.27-alpine
 
-COPY --from=builder /usr/src/app/public/ /usr/share/nginx/html/
-COPY nginx/nginx.conf /etc/nginx/conf.d/default.conf
+RUN apk add --no-cache openssl
 
-# Placeholder credential file so nginx can start even before real credentials
-# are provisioned (see nginx/README.md). Empty file = no valid user = every
-# request outside the LAN allowlist gets a 401 until real credentials are
-# mounted over this path at runtime.
-RUN touch /etc/nginx/.htpasswd
+COPY --from=builder /usr/src/app/public/ /usr/share/nginx/html/
+COPY nginx/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY nginx/docker-entrypoint.d/05-generate-htpasswd.sh /docker-entrypoint.d/05-generate-htpasswd.sh
+RUN chmod +x /docker-entrypoint.d/05-generate-htpasswd.sh
+
+# Safe defaults: no LAN bypass (127.0.0.1/32 matches nothing real), no valid
+# credential (empty .htpasswd, see 05-generate-htpasswd.sh), until a real
+# .env is supplied at deploy time.
+ENV ALLOWED_CIDR=127.0.0.1/32
 
 EXPOSE 80

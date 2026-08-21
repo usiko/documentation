@@ -6,13 +6,13 @@ server {
     error_page 404 /404.html;
 
     # Access control: allow the home LAN through with no prompt, require a
-    # valid credential for everyone else. Real credentials live in
-    # /etc/nginx/.htpasswd, provisioned at runtime (see nginx/README.md) —
-    # never committed to this repo.
+    # valid credential for everyone else. ALLOWED_CIDR and the credentials
+    # (used to build /etc/nginx/.htpasswd, see docker-entrypoint.d/) come
+    # from the container's environment (.env at deploy time) — never
+    # committed to this repo. See nginx/README.md.
     satisfy any;
 
-    # TODO: confirm/adjust this CIDR for the actual home LAN range.
-    allow 192.168.1.0/24;
+    allow ${ALLOWED_CIDR};
     deny all;
 
     auth_basic "Documentation";

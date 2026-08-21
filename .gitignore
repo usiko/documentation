@@ -8,5 +8,5 @@ private/
 .quartz/
 quartz/cli/tui/dist/
 .turbo/
-secrets/
+.env
 *.htpasswd
