@@ -151,6 +151,54 @@ Trois groupes de routes, empilés via des `Router` séparés dans `main.rs` :
 
 ---
 
+## Déploiement
+
+Chaque push sur `master` (des deux repos) construit et publie une image
+Docker sur GHCR (`ghcr.io/usiko/mongomanager`, `ghcr.io/usiko/mongomanagerbackend`).
+Sur le NAS, les deux services sont lancés via un unique `docker-compose.yml`
+(à la racine de [[mongoManager]]) :
+
+```yaml
+services:
+  backend:
+    image: ghcr.io/usiko/mongomanagerbackend:latest
+    pull_policy: always
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - '3000:3000'
+
+  frontend:
+    image: ghcr.io/usiko/mongomanager:latest
+    pull_policy: always
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      TOKEN_HASH_KEY: ${TOKEN_HASH_KEY}
+      DERIVATE_TOKEN_HASH_KEY: ${DERIVATE_TOKEN_HASH_KEY}
+      DATA_SERVER: ${DATA_SERVER}
+    ports:
+      - '8080:8080'
+```
+
+- `pull_policy: always` : chaque `docker compose up -d` re-télécharge
+  d'abord l'image `:latest` avant de (re)créer les conteneurs — combiné à
+  une tâche planifiée DSM, ça permet au NAS de rester à jour sans
+  intervention manuelle (cf. [[Déploiement Docker sur NAS Synology]] §5).
+- `frontend` reçoit `TOKEN_HASH_KEY`/`DERIVATE_TOKEN_HASH_KEY`/`DATA_SERVER`
+  en `environment:` (substitués au démarrage du conteneur dans le bundle
+  Angular, cf. `server/server.js`) ; `backend` reçoit tous ses secrets via
+  `env_file: .env` — les deux doivent partager les mêmes valeurs de
+  `TOKEN_HASH_KEY`/`DERIVATE_TOKEN_HASH_KEY`, sinon `POST /token` échoue.
+- Variante possible avec MongoDB auto-hébergé plutôt qu'Atlas (service
+  `mongo` supplémentaire) — cf. [[Déploiement Docker sur NAS Synology]] §2
+  et §6 pour les pièges spécifiques (auth SCRAM, volumes).
+
+Détails complets (pull GHCR privé depuis Container Manager, chemins Synology,
+pièges rencontrés) : [[Déploiement Docker sur NAS Synology]].
+
 ## Liens
 - [[mongoManager]]
 - [[MongoManagerBackend]]
