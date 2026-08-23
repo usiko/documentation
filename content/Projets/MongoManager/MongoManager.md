@@ -2,8 +2,8 @@
 
 Dashboard de gestion de bases de données MongoDB, composé de deux dépôts :
 [[mongoManager]] (front Angular) et [[MongoManagerBackend]] (backend Rust).
-Voir aussi [[Déploiement Docker sur NAS Synology]] pour la mise en production
-sur NAS.
+Voir aussi [[Pull GHCR privé depuis Container Manager (Synology)]] pour les
+détails du pull d'images privées sur le NAS (indépendant de ce projet).
 
 ---
 
@@ -52,8 +52,8 @@ perso/self-hosted, déployé sur un NAS Synology.
 - **TypeScript strict**.
 - **`@noble/hashes`** (SHA-256 pur JS, audité) pour le hash du token
   technique — remplace `crypto.subtle`, indisponible hors contexte sécurisé
-  (cf. [[Déploiement Docker sur NAS Synology]] §7, cassait l'auth sur un NAS
-  servi en HTTP simple).
+  (cf. §Bug `crypto.subtle` ci-dessous, cassait l'auth sur un NAS servi en
+  HTTP simple).
 - **Vitest** (runner de tests) + **ESLint**/`@angular-eslint`.
 - Déploiement : petit serveur Node/Express (`server/server.js`) qui sert le
   build statique et substitue les variables d'environnement runtime, image
@@ -151,7 +151,7 @@ Trois groupes de routes, empilés via des `Router` séparés dans `main.rs` :
 
 ---
 
-## Déploiement
+## Docker Compose
 
 Chaque push sur `master` (des deux repos) construit et publie une image
 Docker sur GHCR (`ghcr.io/usiko/mongomanager`, `ghcr.io/usiko/mongomanagerbackend`).
@@ -183,23 +183,99 @@ services:
       - '8080:8080'
 ```
 
-- `pull_policy: always` : chaque `docker compose up -d` re-télécharge
-  d'abord l'image `:latest` avant de (re)créer les conteneurs — combiné à
-  une tâche planifiée DSM, ça permet au NAS de rester à jour sans
-  intervention manuelle (cf. [[Déploiement Docker sur NAS Synology]] §5).
-- `frontend` reçoit `TOKEN_HASH_KEY`/`DERIVATE_TOKEN_HASH_KEY`/`DATA_SERVER`
-  en `environment:` (substitués au démarrage du conteneur dans le bundle
-  Angular, cf. `server/server.js`) ; `backend` reçoit tous ses secrets via
-  `env_file: .env` — les deux doivent partager les mêmes valeurs de
-  `TOKEN_HASH_KEY`/`DERIVATE_TOKEN_HASH_KEY`, sinon `POST /token` échoue.
-- Variante possible avec MongoDB auto-hébergé plutôt qu'Atlas (service
-  `mongo` supplémentaire) — cf. [[Déploiement Docker sur NAS Synology]] §2
-  et §6 pour les pièges spécifiques (auth SCRAM, volumes).
+**Variables d'environnement partagées** : `frontend` reçoit
+`TOKEN_HASH_KEY`/`DERIVATE_TOKEN_HASH_KEY`/`DATA_SERVER` en `environment:` ;
+`backend` reçoit tous ses secrets via `env_file: .env`. Les deux doivent
+partager les mêmes valeurs de `TOKEN_HASH_KEY`/`DERIVATE_TOKEN_HASH_KEY`,
+sinon `POST /token` échoue.
 
-Détails complets (pull GHCR privé depuis Container Manager, chemins Synology,
-pièges rencontrés) : [[Déploiement Docker sur NAS Synology]].
+**Substitution build-time/runtime (front)** : `src/environments/environment.prod.ts`
+contient des placeholders `{ENV:TOKEN_HASH_KEY}` / `{ENV:DERIVATE_TOKEN_HASH_KEY}` /
+`{ENV:DATA_SERVER}`. Mécanisme hybride :
+- `build-tools/prebuild.js` (hook npm `prebuild`) les remplace par un `.env`
+  local **si disponible** au moment du `npm run build` (utile en dev). S'il
+  ne trouve pas la variable, il **laisse le placeholder intact** plutôt que
+  de le vider.
+- `server/server.js` fait la substitution **au démarrage du conteneur**, à
+  partir des variables d'environnement réellement passées par
+  `docker-compose`. C'est ce mécanisme qui compte pour le déploiement
+  Docker : l'image GHCR reste identique quel que soit le déploiement (NAS,
+  prod, ...), seule la conf au runtime change — une seule image sert donc
+  n'importe quel déploiement sans rebuild.
+
+**`pull_policy: always`** : chaque `docker compose up -d` re-télécharge
+d'abord l'image `:latest` avant de (re)créer les conteneurs (si l'image n'a
+pas changé, les conteneurs déjà à jour ne sont pas recréés). Combiné à une
+tâche planifiée DSM (`docker compose -f <chemin> up -d`, au démarrage du NAS
+et/ou à intervalle régulier), ça permet au NAS de rester à jour sans
+intervention manuelle. `pull_policy` seul ne fait que garantir qu'un `up`
+re-pull — encore faut-il le déclencheur périodique pour un vrai auto-update.
+
+**Variante avec MongoDB auto-hébergé** : possible d'ajouter un service
+`mongo` local plutôt que de dépendre d'Atlas — le backend détecte tout seul
+`mongodb://` vs `mongodb+srv://` selon que `MONGO_HOST` contient un port
+(`mongo:27017` → `mongodb://`). Cf. §MongoDB auto-hébergé ci-dessous pour les
+pièges rencontrés avec cette variante.
+
+**Pull des images privées GHCR sur le NAS** : voir
+[[Pull GHCR privé depuis Container Manager (Synology)]] (indépendant de ce
+projet — mêmes pièges pour n'importe quelle image privée déployée sur ce
+NAS via Container Manager).
+
+## MongoDB auto-hébergé : erreurs rencontrées
+
+Concerne uniquement la variante « Mongo local » (cf. §Docker Compose) — pas
+le déploiement par défaut vers Atlas.
+
+### Échec d'authentification SCRAM (`Authentication failed`, code 18)
+
+Symptôme : le backend refusait de démarrer / se connecter à Mongo avec une erreur SCRAM alors que `MONGO_USER`/`MONGO_PASSWORD` dans le `.env` semblaient corrects.
+
+**Cause racine** : asymétrie entre deux mécanismes de substitution de Compose.
+- La substitution `${VAR}` dans le YAML du compose (utilisée par le service `mongo` pour ses `MONGO_INITDB_ROOT_*`) **retire** les guillemets d'une valeur comme `MONGO_PASSWORD="motdepasse"`.
+- Le mécanisme `env_file:` (utilisé pour passer les mêmes variables au conteneur `backend`) **ne retire pas** les guillemets — le conteneur reçoit littéralement `"motdepasse"` (avec les guillemets dans la valeur).
+
+Résultat : le conteneur `mongo` s'initialise avec `motdepasse` (sans guillemets) mais le `backend` envoie `"motdepasse"` (avec) → échec SCRAM, alors que les deux `.env` semblent identiques à l'œil.
+
+> [!warning] Piège à connaître
+> Ne **jamais** mettre de guillemets dans les valeurs d'un `.env` consommé à la fois par `${VAR}` (YAML) et par `env_file:` — les deux mécanismes ne traitent pas les guillemets de la même façon. Retirer systématiquement les guillemets des valeurs de `.env` réglait le problème.
+
+### Le fix de `.env` seul ne suffisait pas : piège du volume nommé déjà initialisé
+
+Même après avoir corrigé le `.env` (guillemets retirés), l'erreur SCRAM persistait. Cause : `MONGO_INITDB_ROOT_USER`/`MONGO_INITDB_ROOT_PASSWORD` ne sont appliqués par l'image Mongo **qu'à la toute première initialisation** d'un répertoire de données vide — le volume nommé existant (`mongo-manager_mongo-manager-data`) avait déjà été initialisé une première fois avec les (mauvais) identifiants comportant les guillemets, et les conservait malgré la correction du `.env`.
+
+Fix : repartir d'un volume vierge.
+```bash
+docker rm mongo-manager-db          # nécessaire avant de pouvoir supprimer le volume ("volume is in use" sinon)
+docker volume rm mongo-manager_mongo-manager-data
+docker compose up -d                # ré-initialise le volume avec le .env corrigé
+```
+
+### Tentative de bind-mount pour accéder aux fichiers de données (non aboutie)
+
+Besoin : accéder directement aux fichiers de la base (`data/db`) depuis le NAS, plutôt que via un volume nommé opaque géré par Docker — remplacement tenté : `./data/db:/data/db` à la place du volume nommé.
+
+Résultat : `IllegalOperation: Attempted to create a lock file on a read-only directory: /data/db`. Le conteneur Mongo tourne en uid `999` ; un `chown -R 999:999 data/db` côté NAS n'a **pas** résolu le problème, alors que le propriétaire Unix du dossier semblait pourtant correct côté NAS — probable interférence des ACL Synology (qui peuvent prévaloir sur les permissions POSIX classiques `chown`/`chmod`).
+
+> [!warning] Non résolu / non confirmé
+> Le dernier état de cette piste est une **recommandation non encore validée** : abandonner le bind-mount, revenir au volume nommé (`mongo-manager-data:/data/db`), et si le besoin est d'accéder aux données pour les sauvegarder, passer par des exports `mongodump` planifiés plutôt que par un accès direct aux fichiers bruts du volume. À confirmer/mettre à jour dans ce document une fois validé.
+
+## Bug `crypto.subtle` en contexte non sécurisé (HTTP)
+
+Symptôme observé sur le NAS déployé en HTTP simple (pas de TLS/reverse-proxy) : le front chargeait normalement, mais **aucune requête réseau** n'était émise en cliquant sur "Se connecter" ou "S'inscrire" — pas d'onglet Network avec une requête en échec, littéralement zéro requête, et aucune erreur visible dans la console.
+
+**Cause racine** : l'API Web Crypto (`crypto.subtle`) n'est disponible que dans un **contexte sécurisé** (HTTPS, ou `localhost`) — sur une origine HTTP simple (IP du NAS en `http://`), `crypto.subtle` vaut `undefined`. Le service d'auth du front (`AuthService`) utilisait `crypto.subtle.digest(...)` pour hasher le token technique (`X-Token`) **avant** l'appel HTTP — l'accès à une propriété `undefined` faisait échouer le hashing silencieusement en amont de toute requête réseau, d'où l'absence totale de trafic observé.
+
+Fix : remplacement de `crypto.subtle` par [`@noble/hashes`](https://github.com/paulmillr/noble-hashes) (implémentation SHA-256 pure JS, auditée, sans dépendance), qui fonctionne indépendamment du contexte de sécurité de la page. Les méthodes de hashing sont passées de `Promise<string>` (async, `crypto.subtle.digest`) à `string` (synchrone, `@noble/hashes`).
+
+> [!warning] Piège général à connaître
+> Tout déploiement accessible uniquement en **HTTP simple sur un LAN** (typique d'un NAS sans reverse-proxy TLS devant) casse silencieusement `crypto.subtle` — et plus généralement toute API navigateur restreinte aux contextes sécurisés (ex. aussi : Clipboard API en écriture, certains Service Workers). À vérifier systématiquement si une app front utilise `crypto.subtle`, `navigator.clipboard`, etc. avant un déploiement HTTP-only.
+
+En complément, pour rendre ce genre de panne silencieuse plus facile à diagnostiquer la prochaine fois :
+- Ajout d'un log au démarrage de l'app listant les clés `{ENV:...}` non substituées (placeholder resté intact = variable d'env manquante côté conteneur).
+- Différenciation claire des erreurs HTTP d'auth (`IAuthError`) : serveur injoignable (status `0`) vs réponse d'erreur du serveur (401/409/...) vs erreur générique, avec logs détaillés des appels `login`/`register`/`token`.
 
 ## Liens
 - [[mongoManager]]
 - [[MongoManagerBackend]]
-- [[Déploiement Docker sur NAS Synology]]
+- [[Pull GHCR privé depuis Container Manager (Synology)]]
