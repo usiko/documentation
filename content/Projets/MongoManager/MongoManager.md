@@ -30,6 +30,10 @@ perso/self-hosted, déployé sur un NAS Synology.
 - **Collections** : liste avec nombre de documents, export JSON, duplication
   au sein d'une même base, import (ajout ou remplacement complet du
   contenu).
+- **Recherche de documents** : filtre Mongo brut saisi façon barre de requête
+  Compass (`{ "champ": "valeur" }`), pagination, historique des recherches
+  exécutées — persisté côté backend par utilisateur (connexion/base/
+  collection), donc disponible sur tous les appareils.
 - **Sauvegarde automatique** : planification par base (toutes les N heures,
   ou tous les N jours à une heure fixe — sélection via un `mat-timepicker`),
   rétention configurable (nombre de sauvegardes conservées), sauvegarde
@@ -86,6 +90,7 @@ perso/self-hosted, déployé sur un NAS Synology.
 | `/server-error` | — | Page d'erreur (backend injoignable) |
 | `/databases` | `authGuard` | Sélecteur "aucune base sélectionnée" |
 | `/databases/:connectionId/:databaseName` | `authGuard` | Détail d'une base : collections, personnalisation, panneau de backup |
+| `/databases/:connectionId/:databaseName/:collectionName` | `authGuard` | Recherche de documents d'une collection (filtre façon Compass, pagination, historique) |
 | `/connections` | `authGuard` | Liste et gestion des connexions Mongo cibles |
 | `/user` | `authGuard` | Compte utilisateur (déconnexion, lien changement de mot de passe) |
 | `/user/password` | `authGuard` | Changement de mot de passe |
@@ -123,7 +128,7 @@ Trois groupes de routes, empilés via des `Router` séparés dans `main.rs` :
 
 | Méthode | Route | Description |
 |---|---|---|
-| `GET`/`POST` | `/persistence` | Persistance chiffrée générique par utilisateur |
+| `GET`/`POST` | `/persistence/{key}` | Persistance chiffrée générique par utilisateur, une valeur par `key` (ex. `collectionSearchHistory:{connectionId}:{database}:{collection}` pour l'historique de recherche) — `GET` renvoie `404` si rien n'a encore été enregistré sous cette clé |
 | `GET` | `/user/` | Utilisateur courant (déduit du JWT) |
 | `POST` | `/user/verify-password` | Re-vérifie le mot de passe courant (`401` sinon), sans émettre de nouveau JWT — utilisé avant une action destructrice |
 | `PUT` | `/user/password` | Change le mot de passe (re-vérifie `current_password`, `401` sinon ; `400` si `new_password` < 8 caractères) *(pas encore mergé — [MongoManagerBackend#14](https://github.com/usiko/MongoManagerBackend/pull/14))* |
@@ -143,6 +148,7 @@ Trois groupes de routes, empilés via des `Router` séparés dans `main.rs` :
 | `POST` | `/connections/{id}/databases/{name}/collections/{source}/copy/{target}` | Duplique une collection dans la même base |
 | `POST` | `/connections/{id}/databases/{name}/collections/{collection}/import` | Insère des documents sans toucher au contenu existant |
 | `POST` | `/connections/{id}/databases/{name}/collections/{collection}/replace` | Vide puis réinsère (remplacement complet) |
+| `POST` | `/connections/{id}/databases/{name}/collections/{collection}/documents/search` | Recherche paginée par filtre Mongo brut (`{ filter, skip, limit }`, façon barre de requête Compass) — `total` porte sur l'ensemble du filtre, `422 INVALID_FILTER` si l'opérateur/la syntaxe est invalide |
 | `GET`/`POST` | `/connections/{id}/databases/{name}/backup` | Statut de backup / déclenchement manuel |
 | `POST` | `/connections/{id}/databases/{name}/backup/enable` | Active le backup automatique |
 | `POST` | `/connections/{id}/databases/{name}/backup/disable` | Désactive le backup automatique |
