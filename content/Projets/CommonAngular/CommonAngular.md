@@ -14,18 +14,78 @@ que de copier-coller entre dépôts. Généré via `ng generate library`.
 
 ## État actuel
 
-Projet au stade **squelette** — deux commits seulement (`initial commit`,
-`add library`), aucune fonctionnalité métier encore développée :
+Le workspace racine (`common-angular`) ne contient qu'un seul projet
+Angular : la librairie `common` (`projects/common`).
 
-- Le workspace racine (`common-angular`) ne contient qu'un seul projet
-  Angular : la librairie `common` (`projects/common`).
-- La librairie expose pour l'instant un unique composant placeholder généré
-  par le CLI (`lib-common`, template `<p>common works!</p>`), à remplacer par
-  le premier composant/service réellement partagé.
-- `public-api.ts` ne réexporte que ce composant placeholder.
+- La librairie expose toujours le composant placeholder généré par le CLI
+  (`lib-common`, template `<p>common works!</p>`), pas encore retiré.
+- Premiers services partagés ajoutés : `ConfigService` et `HttpService`
+  (cf. §Services partagés) — *pas encore mergés dans `master`*, en cours de
+  revue : [common-angular#3](https://github.com/usiko/common-angular/pull/3)
+  (branche `feat/config-http-services`).
 
 À mettre à jour au fur et à mesure que du contenu réel est ajouté à la
 librairie.
+
+## Services partagés
+
+### `ConfigService<T>`
+
+Charge un ou plusieurs fichiers de config JSON et les fusionne (les suivants
+surchargent le premier, `Partial<T>`). Repris tel quel du service générique
+déjà utilisé dans [[TaskManager]] (même fichier, même comportement) — objectif :
+centraliser ce code dans `common-angular` plutôt que de le dupliquer entre
+projets.
+
+- Une sous-classe applicative peut fournir un `schema` (type `JSONSchemaType<T>`
+  d'AJV) : la config fusionnée est alors validée avant d'être exposée, et
+  `loadConfig` échoue avec une erreur explicite si elle ne le respecte pas.
+  Sans schéma fourni, aucune validation (comportement historique inchangé).
+- `getConfig()` renvoie la config chargée (`undefined` tant que
+  `loadConfig(paths)` n'a pas émis).
+
+### `HttpService`
+
+Nouveau service (pas de préexistant ailleurs, contrairement à
+`ConfigService`) : fine couche au-dessus de `HttpClient` avec les méthodes
+`get`/`post`/`put`/`patch`/`delete`, sur le même principe de validation
+optionnelle qu'`ConfigService` :
+
+- Chaque méthode accepte un **schéma AJV optionnel** en paramètre (après
+  l'URL, ou après le body pour `post`/`put`/`patch`). Fourni, la réponse est
+  validée avant d'être émise par l'observable ; sinon comportement identique
+  à `HttpClient` (pas de validation).
+- Schéma non respecté → l'observable part en erreur (`Error` avec le détail
+  AJV via `ajv.errorsText(...)`), pas d'émission de la valeur invalide.
+
+```ts
+interface IUser { id: number; name: string }
+
+const userSchema: JSONSchemaType<IUser> = {
+  type: 'object',
+  properties: { id: { type: 'number' }, name: { type: 'string' } },
+  required: ['id', 'name'],
+  additionalProperties: false,
+};
+
+httpService.get<IUser>('/api/users/1', userSchema).subscribe(/* IUser garanti valide, ou erreur */);
+httpService.get<IUser>('/api/users/1'); // sans schéma : comportement HttpClient classique
+```
+
+### Dépendance AJV et build ng-packagr
+
+`ajv` est une dépendance runtime réelle des deux services (pas une
+dépendance de dev). ng-packagr refuse par défaut qu'une librairie distribue
+une dépendance `"dependencies"` qui n'est pas aussi une `peerDependency` (pour
+éviter qu'un consommateur se retrouve avec une version d'AJV différente de la
+sienne sans le savoir) :
+
+> `Dependency ajv must be explicitly allowed using the "allowedNonPeerDependencies" option.`
+
+Résolu en ajoutant `ajv` à `allowedNonPeerDependencies` dans
+`projects/common/ng-package.json`, plutôt qu'en la mettant en
+`peerDependencies` (elle n'a pas vocation à être fournie par l'appli
+consommatrice).
 
 ## Stack technique
 
@@ -39,8 +99,11 @@ librairie.
   généré automatiquement, mentionne encore Karma par erreur.
 - **Prettier** (`printWidth: 100`, guillemets simples, parser `angular` pour
   les templates HTML).
+- **AJV** (`ajv`) pour la validation de schémas JSON, utilisée par
+  `ConfigService`/`HttpService` (cf. §Services partagés).
 - `ng-package.json` : point d'entrée `src/public-api.ts`, sortie compilée
-  dans `dist/common` (à la racine du workspace, hors de `projects/`).
+  dans `dist/common` (à la racine du workspace, hors de `projects/`),
+  `allowedNonPeerDependencies: ["ajv"]`.
 
 ## Structure
 
@@ -55,8 +118,14 @@ common-angular/
         ├── src/
         │   ├── public-api.ts # surface publique exportée par la librairie
         │   └── lib/
-        │       ├── common.ts       # composant placeholder "lib-common"
-        │       └── common.spec.ts  # test associé
+        │       ├── common.ts              # composant placeholder "lib-common"
+        │       ├── common.spec.ts         # test associé
+        │       ├── config/
+        │       │   ├── config.service.ts       # ConfigService<T>
+        │       │   └── config.service.spec.ts
+        │       └── http/
+        │           ├── http.service.ts         # HttpService
+        │           └── http.service.spec.ts
         └── tsconfig.lib*.json / tsconfig.spec.json
 ```
 
@@ -98,3 +167,4 @@ pas encore publié).
 
 ## Liens
 - [[mongoManager]] — projet front consommateur potentiel de cette librairie
+- [[TaskManager]] — origine du `ConfigService` repris tel quel dans cette librairie
