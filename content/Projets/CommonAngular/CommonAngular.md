@@ -19,15 +19,16 @@ Angular : la librairie `common` (`projects/common`).
 
 - La librairie expose toujours le composant placeholder généré par le CLI
   (`lib-common`, template `<p>common works!</p>`), pas encore retiré.
-- Premiers services partagés ajoutés : `ConfigService` et `HttpService`
-  (cf. §Services partagés) — *pas encore mergés dans `master`*, en cours de
-  revue : [common-angular#3](https://github.com/usiko/common-angular/pull/3)
+- Premiers services/stores partagés ajoutés : `ConfigService`, `HttpService`
+  et `createEntityMethods` (EntityStore) (cf. §Services et stores partagés) —
+  *pas encore mergés dans `master`*, en cours de revue :
+  [common-angular#3](https://github.com/usiko/common-angular/pull/3)
   (branche `feat/config-http-services`).
 
 À mettre à jour au fur et à mesure que du contenu réel est ajouté à la
 librairie.
 
-## Services partagés
+## Services et stores partagés
 
 ### `ConfigService<T>`
 
@@ -72,20 +73,65 @@ httpService.get<IUser>('/api/users/1', userSchema).subscribe(/* IUser garanti va
 httpService.get<IUser>('/api/users/1'); // sans schéma : comportement HttpClient classique
 ```
 
-### Dépendance AJV et build ng-packagr
+### `createEntityMethods<T>()` (EntityStore)
 
-`ajv` est une dépendance runtime réelle des deux services (pas une
-dépendance de dev). ng-packagr refuse par défaut qu'une librairie distribue
-une dépendance `"dependencies"` qui n'est pas aussi une `peerDependency` (pour
-éviter qu'un consommateur se retrouve avec une version d'AJV différente de la
-sienne sans le savoir) :
+Base commune **NgRx Signals** à tout store de collection, repris tel quel du
+`entities.store.ts` de [[TaskManager]] (même pattern utilisé dans
+[[chatVault]]). C'est le socle générique décrit dans
+[[Architecture Store et Synchronizer]] — voir cette note pour la vue
+d'ensemble (page/smart/dumb, synchronizer, chargement à la demande).
+
+S'utilise avec `withEntities` d'`@ngrx/signals/entities` :
+
+```ts
+@Injectable({ providedIn: 'root' })
+export class TasksStore extends signalStore(
+  withEntities<ITask>(),
+  // Slices REQUIS par createEntityMethods, cf. point d'attention ci-dessous.
+  withState({ creationLoading: [] as string[], updateLoading: [] as string[], deleteLoading: [] as string[] }),
+  withMethods((store) => createEntityMethods<ITask>()(store)),
+) {}
+```
+
+Fournit :
+- **CRUD** : `add`/`create`/`update`/`remove`/`set`/`clear`, variantes
+  `*_withoutStore` (émettent l'événement sans toucher au store — utilisé
+  côté "attendre la réponse backend avant d'afficher").
+- **Lecture** : `getById`/`getByIds`/`getFirst`/`getLast`, `count`, `exists`.
+- **`query(filters, sorts)`** : filtrage (`eq`/`ne`/`gt`/`lt`/`contains`) et
+  tri multi-critères, en `Signal<T[]>`.
+- **Chargement ciblé** : `loadByIds`/`addIdToLoad`/`removeIdToLoad`, et
+  `load()` (demande de chargement complet, écoutée par le synchronizer).
+- **Suivi de mutations en cours** (`isCreationLoading`/`isUpdateLoading`/
+  `isDeleteLoading`, à binder sur un spinner) et **événements CRUD**
+  (`getEvents()` : `onAdd$`/`onCreate$`/`onUpdate$` (avec `old`)/`onRemove$`/
+  `onSet$`/`onClear$`/`onLoadIdsChange$`/`onLoadRequest$`), consommés par un
+  synchronizer — jamais directement par un composant.
+
+> [!warning] Point d'attention (déjà source de bugs dans TaskManager)
+> Tout store qui utilise `createEntityMethods` **doit** déclarer
+> `withState({ creationLoading: [], updateLoading: [], deleteLoading: [] })` :
+> ces slices sont patchés par `create`/`update`/`remove` mais ne sont **pas**
+> créés par `createEntityMethods` lui-même. Sans eux, ça compile et charge
+> sans erreur, mais ça **crashe au runtime** au premier appel
+> (`TypeError: store.updateLoading is not a function`).
+
+### Dépendances non-peer et build ng-packagr
+
+`ajv` et `uuid` sont des dépendances runtime réelles de la lib (pas de dev).
+ng-packagr refuse par défaut qu'une librairie distribue une dépendance
+`"dependencies"` qui n'est pas aussi une `peerDependency` (pour éviter qu'un
+consommateur se retrouve avec une version différente de la sienne sans le
+savoir) :
 
 > `Dependency ajv must be explicitly allowed using the "allowedNonPeerDependencies" option.`
 
-Résolu en ajoutant `ajv` à `allowedNonPeerDependencies` dans
-`projects/common/ng-package.json`, plutôt qu'en la mettant en
-`peerDependencies` (elle n'a pas vocation à être fournie par l'appli
-consommatrice).
+Résolu en ajoutant `ajv` et `uuid` à `allowedNonPeerDependencies` dans
+`projects/common/ng-package.json`, plutôt qu'en les mettant en
+`peerDependencies` (elles n'ont pas vocation à être fournies par l'appli
+consommatrice — contrairement à `@ngrx/signals`, qui lui **est** en
+`peerDependency` : la version doit rester alignée avec celle déjà utilisée
+par l'appli consommatrice pour son propre state).
 
 ## Stack technique
 
@@ -100,10 +146,13 @@ consommatrice).
 - **Prettier** (`printWidth: 100`, guillemets simples, parser `angular` pour
   les templates HTML).
 - **AJV** (`ajv`) pour la validation de schémas JSON, utilisée par
-  `ConfigService`/`HttpService` (cf. §Services partagés).
+  `ConfigService`/`HttpService`.
+- **NgRx Signals** (`@ngrx/signals`, `@ngrx/signals/entities`) pour
+  `createEntityMethods` (EntityStore), en `peerDependency`.
+- **`uuid`** (`v6`) pour la génération d'id côté `EntityStore.create()`.
 - `ng-package.json` : point d'entrée `src/public-api.ts`, sortie compilée
   dans `dist/common` (à la racine du workspace, hors de `projects/`),
-  `allowedNonPeerDependencies: ["ajv"]`.
+  `allowedNonPeerDependencies: ["ajv", "uuid"]`.
 
 ## Structure
 
@@ -123,9 +172,12 @@ common-angular/
         │       ├── config/
         │       │   ├── config.service.ts       # ConfigService<T>
         │       │   └── config.service.spec.ts
-        │       └── http/
-        │           ├── http.service.ts         # HttpService
-        │           └── http.service.spec.ts
+        │       ├── http/
+        │       │   ├── http.service.ts         # HttpService
+        │       │   └── http.service.spec.ts
+        │       └── entity-store/
+        │           ├── entity-store.ts         # createEntityMethods<T>()
+        │           └── entity-store.spec.ts
         └── tsconfig.lib*.json / tsconfig.spec.json
 ```
 
@@ -167,4 +219,6 @@ pas encore publié).
 
 ## Liens
 - [[mongoManager]] — projet front consommateur potentiel de cette librairie
-- [[TaskManager]] — origine du `ConfigService` repris tel quel dans cette librairie
+- [[TaskManager]] — origine du `ConfigService` et de l'`EntityStore` repris tels quels dans cette librairie
+- [[chatVault]] — autre projet utilisant le même pattern EntityStore/synchronizer
+- [[Architecture Store et Synchronizer]] — vue d'ensemble de l'architecture (page/smart/dumb, stores, synchronizers) que ces stores partagés viennent outiller
