@@ -75,7 +75,7 @@ annulée est marquée `cancelled: true`, pas supprimée) :
 
 | Collection | Modèle | Notes |
 |---|---|---|
-| `task-history-done` | `TaskHistoryDone` | `date`, `comment?`, `duration?` (ms), `doneByMe?`, `cancelled`, `cancelledAt?`. Une remise « à faire » annule la dernière entrée **active** plutôt que de la supprimer (QUE-105) |
+| `task-history-done` | `TaskHistoryDone` | `date`, `comment?`, `duration?` (ms), `timeChrono?`/`timeUserEntry?` (provenance de `duration` : chrono mesuré vs saisie manuelle — seules ces durées alimentent la moyenne, une entrée sans les deux flags est traitée comme une saisie manuelle héritée), `doneByMe?`, `cancelled`, `cancelledAt?`. Une remise « à faire » annule la dernière entrée **active** plutôt que de la supprimer (QUE-105) |
 | `task-history-postpone` | `TaskHistoryPostpone` | `offset` appliqué, nouvelle `dueDate` résultante — purement informatif côté front, le calcul/la persistance sont faits côté back |
 | `task-history-archive` | `TaskHistoryArchive` | Transitions archivé ↔ désarchivé |
 | `task-history-inprogress` | `TaskHistoryInProgress` | Sessions de chrono (QUE-120) : `startedAt`, `activity: {start, stop}[]`, `completed`, `cancelled`, `checkedSteps` |
