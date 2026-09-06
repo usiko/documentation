@@ -31,6 +31,30 @@ quel que soit le jour réel de validation).
   Si `weekDays`/`monthDays`/`months` est vide, le motif suit le jour de la
   semaine/mois/mois de l'année de l'**ancre** (`dueDate`/`createdAt`).
 
+### Bug corrigé — validation en avance rejouant la même occurrence
+
+**Symptôme rapporté** : une tâche hebdomadaire (« laver le bac de la machine
+à café ») validée la veille du jour prévu réapparaissait « à faire » dès le
+lendemain — c'est-à-dire le jour même initialement prévu — au lieu de la
+semaine suivante.
+
+**Cause racine** : `compute_next_due_date` cherche « la première occurrence
+du motif strictement postérieure à `last_done` ». Quand `last_done` tombe
+*avant* l'échéance actuellement affichée (validation en avance, pas en
+retard), cette échéance affichée est elle-même « la première occurrence
+strictement postérieure à `last_done` » — elle est donc renvoyée telle
+quelle, comme si elle n'avait pas encore été consommée par cette validation.
+
+**Fix** (`TaskManager-backend`, `db::task::update`) : pour un motif à grille
+fixe (`daily`/`weekly`/`monthly`/`yearly`), si la validation intervient
+avant l'échéance actuellement affichée (`schedule::
+is_early_fixed_grid_completion`), elle est traitée comme un
+`recalculateNext: false` — l'échéance théorique (celle affichée avant la
+validation) sert d'ancre à la place de la date réelle de validation, pour
+que la grille avance bien d'un cycle complet. Motif `custom` explicitement
+exclu : il est flottant par conception, une validation en avance doit y
+rester basée sur la date réelle (cf. section suivante).
+
 ### Motif flottant — `custom` (« tous les N jours/semaines/mois/ans »)
 
 L'intervalle se compte depuis la **dernière réalisation réelle** (ou
@@ -147,7 +171,9 @@ données (CQRS-léger via subjects).
 couvre notamment : heure de Paris vs UTC pour `daily`, validation couvrant
 la journée civile entière, motif `custom` flottant sur réalisation en
 retard, non-avancement tant que le cycle courant n'est pas validé,
-saisonnalité, et les deux cas QUE-91 (report multiple de la période, motifs
+`is_fixed_grid`/`is_early_fixed_grid_completion` (validation en avance
+d'une grille fixe, cf. bug corrigé ci-dessus), saisonnalité, et les deux cas
+QUE-91 (report multiple de la période, motifs
 calendaire et `custom`).
 
 ## Liens
