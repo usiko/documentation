@@ -118,6 +118,14 @@ par tâche (`Task.icsExport`).
   corps optionnel, référence ticket `QUE-xxx` si pertinent.
 - Une PR par ticket ; description = résumé du changement + plan de test,
   pas une paraphrase du diff.
+- **Titre de PR préfixé** : `[feat] ...` pour une PR de feature, `[bug] ...`
+  pour une correction — vérifié par CI (`pr-title.yml`), bloquant.
+- **Branches `feature/<nom>`** : une branche `feature/*` est une branche
+  d'intégration au même titre que `master` — elle reçoit d'autres branches
+  (sous-tâches de la même feature) via PR avant d'être elle-même mergée vers
+  `master`. Couverte par le **même pipeline CI** que `master`
+  (`cargo test`/`fmt --check`/`clippy -D warnings`/`audit`), en `push` et en
+  `pull_request`.
 
 ## Liens
 - [[TaskManager]]
