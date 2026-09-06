@@ -166,6 +166,17 @@ Détail du modèle de récurrence : [[Modèle de données]] et [[Récurrence]].
 - `PageStore`/`PageFabStore` fournis en `providers` de la page, pas en
   root.
 
+## Bonnes pratiques Git / PR
+
+- **Titre de PR préfixé** : `[feat] ...` pour une PR de feature, `[bug] ...`
+  pour une correction — vérifié par CI (`pr-title.yml`), bloquant.
+- **Branches `feature/<nom>`** : une branche `feature/*` est une branche
+  d'intégration au même titre que `master` — elle reçoit d'autres branches
+  (sous-tâches de la même feature) via PR avant d'être elle-même mergée vers
+  `master`. Couverte par le **même pipeline CI** que `master`
+  (`test.yml`/`build.yml`/`lint.yml`), déclenché sur les PR ciblant
+  `master` **et** `feature/**`.
+
 ## Liens
 - [[TaskManager]]
 - [[Backend]]
