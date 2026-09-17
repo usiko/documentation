@@ -2,7 +2,8 @@
 
 Modèle de données du projet [[TaskManager]] — collections MongoDB et formes
 DTO échangées entre [[Backend]] et [[Frontend]]. Le détail du calcul de
-`nextDueDate` (récurrence) est dans [[Récurrence]].
+`nextDueDate` (récurrence) est dans [[Récurrence]], celui des chaînes de
+tâches dans [[Séries]].
 
 ---
 
@@ -18,7 +19,7 @@ Champs principaux (`src/model/task_model.rs`, camelCase côté JSON) :
 | `description` | `string?` | |
 | `steps` | `TaskStep[]` | Étapes informatives (`id`, `text`), aucun impact sur le statut |
 | `calendarKeyword` | `CalendarKeyword?` | Mot-clé Google Calendar, prime sur celui de la catégorie |
-| `dueDate` | `DateTime?` | Utilisée si `recurrence.type === 'none'`, ou comme ancre initiale d'une récurrente (repli sur `createdAt` si absente — le front envoie `null` pour une tâche créée récurrente) |
+| `dueDate` | `DateTime?` | Utilisée si `recurrence.type === 'none'`, ou comme ancre initiale d'une récurrente (repli sur `createdAt` si absente — le front envoie `null` pour une tâche créée récurrente). Pour une tâche `free`, c'est une *programmation* (facultative), pas une échéance — elle n'est jamais « en retard » ; sur une tâche d'une chaîne, elle est **dérivée** du tour le plus ancien qui l'attend (cf. [[Séries]]) |
 | `duration` | `{ min, max }` | Fourchette estimée, **en millisecondes** (QUE-120) |
 | `recurrence` | `TaskRecurrence` | Voir [[Récurrence]] |
 | `status` | `todo \| in-progress \| done \| cancelled` | Ne redescend jamais seul à `todo` pour une récurrente — le statut affiché dérive de `nextDueDate`/`doneSummary`, jamais de ce champ seul |
@@ -43,7 +44,7 @@ Champs principaux (`src/model/task_model.rs`, camelCase côté JSON) :
 
 ```ts
 interface ITaskRecurrence {
-  type: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+  type: 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom' | 'free';
   hours: number[];     // daily   : heures (0-23)
   weekDays: number[];  // weekly  : 0=Lun … 6=Dim
   monthDays: number[]; // monthly : 1-31
@@ -55,8 +56,46 @@ interface ITaskRecurrence {
 
 `daily`/`weekly`/`monthly`/`yearly` sont des motifs **calendaires** (grille
 fixe) ; `custom` (« tous les N jours/semaines/mois/ans ») est un motif
-**flottant** (calé sur la dernière réalisation réelle). Détail complet des
-règles de calcul : [[Récurrence]].
+**flottant** (calé sur la dernière réalisation réelle) ; `free` (QUE-164) ne
+programme **rien** — la tâche revient dès qu'elle est validée. Détail complet
+des règles de calcul : [[Récurrence]].
+
+## `TaskSeries` (collection `task-series`)
+
+Configuration d'une chaîne de tâches (`src/model/task_series_model.rs`) —
+le *comment*, pas le *où on en est* (cf. [[Séries]]).
+
+| Champ | Type | Notes |
+|---|---|---|
+| `id` / `userId` | `string` | Même remarque que `Task.userId` sur la sérialisation |
+| `name` | `string?` | Nom libre (QUE-169) ; sans lui, la série se désigne par le titre de sa tête |
+| `headTaskId` | `string` | Tâche qui déclenche la chaîne |
+| `steps` | `TaskSeriesStep[]` | Étapes **ordonnées** : `id`, `taskId`, `delay?`, `optional` |
+
+`TaskSeriesStep.delay` : `{ value, unit }` avec
+`unit: 'minute' | 'hour' | 'day' | 'week' | 'month' | 'year'` —
+type d'unité **propre à la série** (`TaskSeriesDelayUnit`), distinct du
+`RecurrenceUnit` de la récurrence, qui ne descend pas sous la journée
+(QUE-172). Absent : l'étape est programmée dès validation de la précédente.
+
+`optional` marque une étape que la chaîne peut dépasser sans elle, et change
+le **nombre de tours** qu'une validation solde (cf. [[Séries]]).
+
+## `TaskSeriesInstance` (collection `task-series-instances`)
+
+Un **tour** en cours (`task_series_instance_model.rs`) : une exécution d'une
+configuration. Créé à la validation de la tête, supprimé à la fin de la
+chaîne — la collection ne contient donc que de l'en-attente.
+
+| Champ | Type | Notes |
+|---|---|---|
+| `id` / `userId` | `string` | |
+| `seriesId` | `string` | Configuration dont ce tour est une exécution |
+| `headTaskId` | `string` | Dénormalisé : nommer le tour sans charger la config |
+| `startedAt` | `DateTime` | Validation de la tête qui a lancé le tour — distingue deux tours d'une même chaîne |
+| `currentStepId` | `string` | Étape en attente (`TaskSeriesStep.id`) |
+| `currentTaskId` | `string` | Tâche de l'étape en attente — dénormalisée pour retrouver les tours concernés par une validation sans parcourir les configs |
+| `dueDate` | `DateTime` | Échéance propre au tour (validation précédente + délai de l'étape) |
 
 ## `Category` (collection `category`)
 
@@ -75,7 +114,7 @@ annulée est marquée `cancelled: true`, pas supprimée) :
 
 | Collection | Modèle | Notes |
 |---|---|---|
-| `task-history-done` | `TaskHistoryDone` | `date`, `comment?`, `duration?` (ms), `timeChrono?`/`timeUserEntry?` (provenance de `duration` : chrono mesuré vs saisie manuelle — seules ces durées alimentent la moyenne, une entrée sans les deux flags est traitée comme une saisie manuelle héritée), `doneByMe?`, `cancelled`, `cancelledAt?`. Une remise « à faire » annule la dernière entrée **active** plutôt que de la supprimer (QUE-105) |
+| `task-history-done` | `TaskHistoryDone` | `date`, `comment?`, `duration?` (ms), `timeChrono?`/`timeUserEntry?` (provenance de `duration` : chrono mesuré vs saisie manuelle — seules ces durées alimentent la moyenne, une entrée sans les deux flags est traitée comme une saisie manuelle héritée), `doneByMe?`, `cancelled`, `cancelledAt?`, `seriesIds?` (chaînes auxquelles la validation a participé, QUE-165). Une remise « à faire » annule la dernière entrée **active** plutôt que de la supprimer (QUE-105) |
 | `task-history-postpone` | `TaskHistoryPostpone` | `offset` appliqué, nouvelle `dueDate` résultante — purement informatif côté front, le calcul/la persistance sont faits côté back |
 | `task-history-archive` | `TaskHistoryArchive` | Transitions archivé ↔ désarchivé |
 | `task-history-inprogress` | `TaskHistoryInProgress` | Sessions de chrono (QUE-120) : `startedAt`, `activity: {start, stop}[]`, `completed`, `cancelled`, `checkedSteps` |
@@ -94,3 +133,4 @@ si les deux sont renseignés (`calendar_feed::effective_keyword`).
 - [[Backend]]
 - [[Routes]]
 - [[Récurrence]]
+- [[Séries]]

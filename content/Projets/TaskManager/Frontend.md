@@ -2,7 +2,8 @@
 
 Front du projet [[TaskManager]] (dépôt `TaskManager`). Ne contient **que**
 le front — le backend est un dépôt séparé ([[Backend]]). Voir [[Routes]]
-pour la table complète des routes Angular.
+pour la table complète des routes Angular, et [[Séries]] pour les vues des
+chaînes de tâches (onglet « Série », page « Mes séries », bloc du chrono).
 
 ---
 
@@ -114,6 +115,18 @@ page** qui demande les stores dont elle a besoin, à son entrée :
 - Chargements ciblés (vue détail) : `addIdToLoad`/`removeIdToLoad`
   (`onLoadIdsChange$`).
 
+### Stores de la feature séries
+
+`NGRX/task-series/` (configurations) et `NGRX/task-series-instance/` (tours
+en cours) suivent le même schéma, avec leurs synchronizers
+(`synchronizer/task-series.synchronizer.ts`,
+`task-series-instance.synchronizer.ts`). Deux méthodes de store méritent
+d'être connues parce que l'UI s'appuie dessus :
+`TaskSeriesInstanceStore.pendingByTaskId()` (les tours en attente sur une
+tâche, triés par échéance) et `runOrdinals()` (le numéro `#N` d'un tour,
+ordre de lancement **global** toutes chaînes confondues). Détail du modèle :
+[[Séries]].
+
 ### Stores de page
 
 `PageStore`/`PageFabStore` (`NGRX/page/`) : état UI (titre, menu, FAB,
@@ -147,6 +160,34 @@ Détail du modèle de récurrence : [[Modèle de données]] et [[Récurrence]].
   `onXxx()`).
 - Auth : `authGuard` (`services/auth`) protège `task`/`category`/`user`/
   `chrono` ; token géré via `http-interceptor`.
+
+## Configuration d'environnement
+
+`src/environments/environment.ts` (dev) / `environment.prod.ts` (prod, dont
+les placeholders `{ENV:...}` sont substitués au build par
+`build-tools/prebuild.js`). Variables injectées au déploiement :
+`DATA_SERVER`, `TOKEN_HASH_KEY`, `DERIVATED_TOKEN_HASH_KEY`, et **`DEV_MODE`**.
+
+`DEV_MODE` sert uniquement à **signaler l'environnement à l'utilisateur** :
+une instance de recette ou de démo doit être reconnaissable au premier coup
+d'œil. `AppModeService` (`@services/app-mode`) normalise la valeur — le
+prebuild produit un booléen (`true`/`false` sans guillemets) **ou** une
+chaîne (`""` quand la variable n'est pas définie) —, et seuls `true`/`'true'`
+activent le mode : un déploiement qui oublie la variable n'affiche rien.
+
+La pastille « Mode dev » apparaît alors sur tout le parcours de démarrage :
+boot-splash statique d'`index.html`, splashscreen animé, page de connexion
+(seul écran durable avant login, le menu latéral n'y étant pas atteignable),
+puis menu latéral à côté de la version. Forme et style dans le dumb partagé
+`app-pill-badge` (`label` + `color`) ; le boot-splash, qui vit **hors
+Angular**, le reproduit en CSS pur, piloté par un attribut
+`data-dev-mode="{ENV:DEV_MODE}"`.
+
+> [!warning] Le placeholder ne doit pas apparaître en entier dans le CSS
+> La règle de repli du boot-splash (afficher la pastille quand le
+> placeholder n'a pas été substitué, cas d'un `ng serve` local) teste le `{`
+> initial, pas `{ENV:DEV_MODE}` : le prebuild remplacerait ce texte-là aussi
+> et emporterait la règle CSS avec lui.
 
 ## Garde-fous review
 
@@ -183,3 +224,4 @@ Détail du modèle de récurrence : [[Modèle de données]] et [[Récurrence]].
 - [[Routes]]
 - [[Modèle de données]]
 - [[Récurrence]]
+- [[Séries]]

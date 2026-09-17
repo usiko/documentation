@@ -24,8 +24,10 @@ Déclarées dans `src/app/app.routes.ts`, toutes **lazy-loadées**
 | `/task/archive` | `authGuard` | `TaskArchivePageComponent` | Tâches archivées |
 | `/task/details` | `authGuard` | `TaskDetailPageComponent` | Création d'une tâche |
 | `/task/details/:id` | `authGuard` | `TaskDetailPageComponent` | Édition / consultation d'une tâche |
+| `/task/details/:id/:tab` | `authGuard` | `TaskDetailPageComponent` | Onglet de la vue détail (dont « Série », cf. [[Séries]]) |
 | `/task/manage` | `authGuard` | `ManageTaskPageComponent` | Post-création/édition (retour liste) |
 | `/task/edit` | `authGuard` | — | `redirectTo: 'details'` (alias legacy) |
+| `/series/list` | `authGuard` | `SeriesListPageComponent` | Toutes les séries, celles en cours d'abord (QUE-169) — bouton retour → `/task/list` |
 | `/category/list` | `authGuard` | `CategoryListPageComponent` | Liste des catégories |
 | `/category/edit` | `authGuard` | `EditCategoryPageComponent` | Création (bouton retour → `/category/list`) |
 | `/category/edit/:id` | `authGuard` | `EditCategoryPageComponent` | Édition |
@@ -69,6 +71,11 @@ détail des groupes dans [[Backend]]#Authentification — 3 groupes de routes.
 | `GET`/`POST` | `/task/` | `task::{get_all,create}` | Liste / création d'une tâche |
 | `GET`/`DELETE`/`PUT` | `/task/{id}` | `task::{get_by_id,delete,update}` | Détail / suppression / mise à jour d'une tâche — `update` calcule et renvoie la tâche canonique (`next_due_date`, `done_summary`…) |
 | `GET` | `/task/{id}/history` | `task::get_history` | Historique paginé (done/postpone) d'une tâche |
+| `GET`/`POST` | `/task-series/` | `task_series::{get_all,create}` | Liste / création d'une configuration de série ([[Séries]]) |
+| `PUT`/`DELETE` | `/task-series/{id}` | `task_series::{update,delete}` | Mise à jour (étapes, nom) / suppression — la suppression referme aussi les tours en cours |
+| `GET` | `/task-series-instances/` | `task_series_instance::get_all` | Tours en cours (aucune création directe : un tour naît de la validation d'une tête) |
+| `DELETE` | `/task-series-instances/{id}` | `task_series_instance::delete` | **Annule** un tour sans rien valider, et relâche l'échéance qu'il portait |
+| `POST` | `/task-series-instances/{id}/complete` | `task_series_instance::complete` | **Termine** un tour : valide l'étape attendue et toutes les suivantes, puis le referme |
 | `GET`/`POST` | `/category/` | `category::{get_all,create}` | Liste / création d'une catégorie |
 | `PUT`/`DELETE` | `/category/{id}` | `category::{update,delete}` | Mise à jour / suppression |
 | `GET` | `/task-history/done` | `task_history::get_done_in_range` | Réalisations dans une plage (`?from=&to=`, QUE-138) |
@@ -93,3 +100,4 @@ interdit par la spec HTTP).
 - [[Backend]]
 - [[Modèle de données]]
 - [[Récurrence]]
+- [[Séries]]

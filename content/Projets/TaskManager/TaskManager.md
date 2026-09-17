@@ -3,8 +3,8 @@
 Application de gestion de tâches **récurrentes** (nom interne de l'app :
 *TaskDays*), composée de deux dépôts séparés : [[Frontend]] (Angular/Ionic)
 et [[Backend]] (Rust/Axum). Voir aussi [[Routes]] (toutes les routes front et
-back) et [[Modèle de données]] / [[Récurrence]] pour le détail du moteur de
-récurrence.
+back), [[Modèle de données]] / [[Récurrence]] pour le moteur de récurrence, et
+[[Séries]] pour les chaînes de tâches liées.
 
 ---
 
@@ -22,6 +22,15 @@ Heroku.
 - **Tâches récurrentes** — 5 motifs (`none`/`daily`/`weekly`/`monthly`/
   `yearly`/`custom`), saisonnalité (`activeMonths`), report (« repousser »)
   avec décalage jours/mois/années. Détail du moteur : [[Récurrence]].
+- **Tâches libres** (QUE-164) — récurrence `free` : la tâche revient après
+  chaque validation, mais **sans échéance programmée**. Sa date est une
+  *programmation* facultative, pas une échéance : une tâche libre n'est donc
+  jamais « en retard ». Socle des tâches enchaînées ([[Séries]]).
+- **Séries de tâches liées** (QUE-165 → QUE-172) — enchaîner des tâches qui
+  n'ont de sens que l'une après l'autre (lancer une machine → étendre →
+  plier), avec délai par étape (de la minute à l'année), plusieurs
+  *tours* d'une même chaîne en parallèle, et convergence de plusieurs
+  chaînes sur une même tâche. Détail : [[Séries]].
 - **Étapes informatives** (`steps`) — sous-liste cochable dans l'UI mais sans
   impact sur le statut de la tâche (purement indicatif).
 - **Chrono** (QUE-120) — démarrage/pause/reprise du temps passé sur une
@@ -67,8 +76,9 @@ d'authentification).
 
 **MongoDB Atlas**, une seule base applicative. Collections principales :
 `tasks`, `category`, `task-history-done`, `task-history-postpone`,
-`task-history-archive`, `task-history-inprogress`, plus les collections
-utilisateur/auth. Voir [[Modèle de données]] pour le détail des champs.
+`task-history-archive`, `task-history-inprogress`, `task-series` /
+`task-series-instances` ([[Séries]]), plus les collections utilisateur/auth.
+Voir [[Modèle de données]] pour le détail des champs.
 
 ## Authentification
 
@@ -91,3 +101,4 @@ headers custom.
 - [[Routes]]
 - [[Modèle de données]]
 - [[Récurrence]]
+- [[Séries]]

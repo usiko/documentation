@@ -70,6 +70,19 @@ date réelle de validation, décalée de l'intervalle.
 > « toutes les 2/3 semaines » est donc toujours modélisée en `custom` +
 > `unit: 'week'`, jamais en `weekly`.
 
+### Sans motif — `free` (« tâche libre », QUE-164)
+
+`compute_next_due_date` ne calcule **jamais** d'échéance pour une tâche
+`free` : elle revient dès qu'elle est validée, sans grille ni intervalle.
+`routes::task::to_response` la traite comme systématiquement due (`is_due`),
+pour qu'elle réapparaisse « à faire » immédiatement.
+
+Sa `dueDate` éventuelle est donc une **programmation** (« je la ferai jeudi »),
+pas une échéance : une tâche libre n'est jamais *en retard*, et le front
+l'exclut du surlignage comme du compteur de retard. C'est aussi ce type qui
+sert de brique aux chaînes de tâches — sur une tâche d'une série, la
+`dueDate` est dérivée du tour le plus ancien qui l'attend (cf. [[Séries]]).
+
 ## Saisonnalité (`activeMonths`)
 
 Appliquée après le motif : si le mois de l'occurrence trouvée n'est pas
@@ -182,3 +195,4 @@ calendaire et `custom`).
 - [[Backend]]
 - [[Modèle de données]]
 - [[Routes]]
+- [[Séries]]

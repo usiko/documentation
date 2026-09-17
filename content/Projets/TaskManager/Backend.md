@@ -20,7 +20,8 @@ complète des routes HTTP et leurs groupes d'authentification.
 - **Modèles** — `src/model/*_model.rs` : structures Mongo + DTO HTTP.
 - **Accès DB** — `src/db/*.rs` : requêtes Mongo (un fichier par
   collection/domaine : `task.rs`, `task_history.rs`, `category.rs`,
-  `user.rs`, `stats.rs`, `persistence.rs`).
+  `task_series.rs`, `task_series_instance.rs`, `user.rs`, `stats.rs`,
+  `persistence.rs`).
 - **Handlers HTTP** — `src/routes/*.rs` : un handler par endpoint, assemble
   la réponse à partir des couches `db`/`utils`.
 - **Logique métier pure** — `src/utils/` (ex. `schedule.rs`, le moteur de
@@ -74,6 +75,11 @@ Mongo :
   `task-history-inprogress` — historiques (réalisation, report, archivage,
   sessions de chrono), toujours conservés (jamais de suppression physique
   d'une réalisation, seulement `cancelled: true`).
+- `task-series` / `task-series-instances` — chaînes de tâches liées : la
+  **configuration** d'un enchaînement et les **tours** en cours. Voir
+  [[Séries]] ; la logique d'avancement vit dans `db::task_series`
+  (`advance_after_validation`, appelée par `db::task::update` à chaque
+  validation).
 
 ## Calcul dérivé, jamais stocké
 
@@ -133,3 +139,4 @@ par tâche (`Task.icsExport`).
 - [[Routes]]
 - [[Modèle de données]]
 - [[Récurrence]]
+- [[Séries]]
