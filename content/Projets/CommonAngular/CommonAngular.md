@@ -101,6 +101,11 @@ adapters de conversion.
   pagination/filtres/tri.
 - `getByIds(ids)` passe par `POST ${url}/batch` plutôt qu'un `GET
   ?ids=…`, pour ne pas buter sur la limite de longueur d'URL.
+- Chaque appel est piloté par `take(1)` + `takeUntil(destroy$)` : une seule
+  réponse par requête, annulation de la requête en vol quand le propriétaire
+  est détruit (`DestroyRef` passé au constructeur, ou `ngOnDestroy` si le
+  service est fourni par DI). Sans remplacer le `takeUntilDestroyed()` de
+  l'appelant à la souscription.
 - **Pas** `providedIn: 'root'` : `init()` stocke un état par instance et les
   génériques sont effacés à l'exécution, donc une instance par ressource
   (`new RestfulApiService<ITask, IBackTask>(inject(HttpService)).init({…})`).

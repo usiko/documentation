@@ -62,6 +62,56 @@ Pour chaque appel, l'adapter effectif est le premier trouvé dans cet ordre :
 Les adapters sont donc **tous optionnels** : un backend dont les DTO
 correspondent déjà aux modèles front n'a besoin d'aucun adapter.
 
+## Cycle de vie des appels
+
+Chaque méthode applique la même politique avant de renvoyer son observable :
+
+```ts
+request$.pipe(take(1), takeUntil(this.destroy$));
+```
+
+- **`take(1)`** : une seule réponse par requête, l'observable se termine
+  ensuite et libère sa souscription.
+- **`takeUntil(destroy$)`**, placé **en dernier** : la destruction du
+  propriétaire annule la requête en vol (l'observable se termine sans
+  émettre), et un appel *postérieur* à la destruction ne part même pas sur
+  le réseau.
+
+### Ce qui déclenche `destroy$`
+
+Le service étant instancié à la main (`new`), Angular n'appelle pas son
+`ngOnDestroy` : il faut lui donner une durée de vie. Deux chemins, tous deux
+idempotents :
+
+| Chemin | Quand |
+|---|---|
+| `DestroyRef` passé au constructeur | usage recommandé, instanciation manuelle |
+| `ngOnDestroy` | quand le service est fourni par DI (`providers: [RestfulApiService]`) |
+
+```ts
+private api = new RestfulApiService<ITask, IBackTask>(
+  inject(HttpService),
+  inject(DestroyRef),
+).init({ url: `${environment.urls.dataServer}/task` });
+```
+
+> Sans `DestroyRef` ni fourniture par DI, rien ne complète `destroy$` : les
+> requêtes ne sont jamais annulées. C'est pourquoi `inject(DestroyRef)` fait
+> partie de la forme recommandée.
+
+Détail d'implémentation : `destroy$` est un `ReplaySubject<void>(1)`, pas un
+`Subject`. `takeUntil` ignore la **complétion** de son notifier — avec un
+`Subject` déjà complété, un appel postérieur à la destruction serait quand
+même parti. Le replay de l'émission coupe ces appels tardifs.
+
+### Ça ne remplace pas le `takeUntilDestroyed` de l'appelant
+
+Le service ne connaît que sa propre durée de vie, pas celle du composant ou
+du synchronizer qui s'abonne. La règle de [[Frontend]] reste entière : toute
+souscription porte son `takeUntilDestroyed()` ou son `takeUntil(this.destroy$)`
+nettoyé en `ngOnDestroy`. Les deux se composent — le service coupe au
+niveau de la ressource, l'appelant au niveau de sa vue.
+
 ## Configuration — `init()`
 
 ```ts
@@ -125,7 +175,7 @@ Aucun adapter : `TFront` et `TBack` ont la même forme, le passthrough suffit.
 ```ts
 @Injectable({ providedIn: 'root' })
 export class TagDataService {
-  private api = new RestfulApiService<ITag, ITag>(inject(HttpService)).init({
+  private api = new RestfulApiService<ITag, ITag>(inject(HttpService), inject(DestroyRef)).init({
     url: `${environment.urls.dataServer}/tag`,
   });
 
@@ -154,7 +204,10 @@ des one-liners.
 export class TaskDataService {
   private adapter = inject(TaskDataAdapter);
 
-  private api = new RestfulApiService<ITask, IBackTask>(inject(HttpService)).init({
+  private api = new RestfulApiService<ITask, IBackTask>(
+    inject(HttpService),
+    inject(DestroyRef),
+  ).init({
     url: `${environment.urls.dataServer}/task`,
     get: (back) => this.adapter.fromBack(back),
     create: {
@@ -348,10 +401,13 @@ instance et sa propre URL de base.
 `restful-api.service.spec.ts` couvre les deux modes de configuration (URL
 seule avec passthrough, et URL + adapters par opération), la surcharge
 ponctuelle par options, la sérialisation des query params, l'adaptation
-d'une enveloppe backend différente, le batch-get, et l'erreur levée quand
-`init({ url })` n'a pas été appelé. Le service est instancié directement
+d'une enveloppe backend différente, le batch-get, l'erreur levée quand
+`init({ url })` n'a pas été appelé, et le cycle de vie (complétion après une
+émission, annulation via `DestroyRef` et via `ngOnDestroy`, appel tardif qui
+ne part pas). Le service est instancié directement
 (`new RestfulApiService(httpService)`), conformément à son usage réel, avec
-`HttpTestingController` pour les requêtes.
+`HttpTestingController` pour les requêtes — `verify({ ignoreCancelled: true })`
+puisque les tests de destruction laissent volontairement une requête annulée.
 
 ## Liens
 
