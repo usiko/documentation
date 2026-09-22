@@ -47,7 +47,7 @@ Trois types de fonctions de conversion, tous exportés par la lib :
 | Type | Signature | Utilisé par |
 |---|---|---|
 | `ResAdapter<TFront, TBack>` | `(back: TBack) => TFront` | toutes les lectures + la réponse des écritures |
-| `ReqAdapter<TIn, TOut>` | `(input: TIn) => TOut` | corps envoyé en `POST`/`PUT` |
+| `ReqAdapter<TIn, TOut>` | `(input: TIn) => TOut` | corps envoyé en `POST`/`PUT` (`TOut` = `Partial<TBack>`) |
 | `PageAdapter<TBack, TBackPage>` | `(backPage: TBackPage) => { items: TBack[]; meta: IPageMeta }` | enveloppe de pagination du `GET` collection |
 
 ### Résolution en cascade
@@ -118,8 +118,8 @@ niveau de la ressource, l'appelant au niveau de sa vue.
 interface IRestfulApiConfig<TFront, TBack> {
   url: string;                                  // URL de base, sans slash final
   get?: ResAdapter<TFront, TBack>;              // getAll / getById / getByIds
-  create?: { reqAdapter?; resAdapter? };
-  update?: { reqAdapter?; resAdapter? };        // reqAdapter typé Partial<TFront> → Partial<TBack>
+  create?: { reqAdapter?; resAdapter? };        // reqAdapter : TFront → Partial<TBack>
+  update?: { reqAdapter?; resAdapter? };        // reqAdapter : Partial<TFront> → Partial<TBack>
   delete?: { resAdapter? };                     // seulement si le backend renvoie la ressource supprimée
 }
 ```
@@ -183,6 +183,27 @@ enchaîner sur la suppression dans le store sans refermer sur l'identifiant.
 > choix majoritaire, mais la norme autorise un `204` sur `PUT` : contre un
 > backend qui ne renvoie rien, le `resAdapter` serait appelé avec une
 > réponse vide.
+
+### L'identifiant est dans le path, jamais dans le body
+
+`getById`, `update` et `remove` portent l'identifiant dans l'URL
+(`${url}/${id}`) ; le service ne le remet jamais dans le corps de la
+requête. Le dupliquer créerait une ambiguïté (que faire si `body.id` diffère
+de l'id de l'URL ?) — à noter que ce n'est pas universel, JSON:API impose au
+contraire l'id dans le body.
+
+Le corps envoyé par `create` et `update` est typé **`Partial<TBack>`**, pas
+`TBack` : une écriture n'envoie ni l'identifiant (porté par l'URL, ou généré
+par le serveur à la création) ni les champs calculés côté backend. C'est au
+`reqAdapter` de ne retenir que les champs éditables — le service ne peut pas
+filtrer l'id lui-même, il ne connaît pas le nom du champ identifiant de
+`TBack` (`id`, `_id`, `uuid`…).
+
+```ts
+// toBackPartial ne mappe pas l'id : même si l'appelant le passe, il ne part pas sur le fil
+this.api.update('42', { id: '42', title: 'Modifiée' });
+// → PUT task/42   body : { title: 'Modifiée' }
+```
 
 ### `getByIds` passe par POST
 
