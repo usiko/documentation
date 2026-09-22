@@ -1,0 +1,360 @@
+#commonangular #angular #rest #api
+
+Service générique de la librairie `common` ([[CommonAngular]]) implémentant
+le **CRUD RESTful** d'une ressource, paramétré par deux types : le modèle
+front (`TFront`) et le DTO backend (`TBack`). Objectif : ne plus réécrire la
+même couche HTTP CRUD dans chaque data-service de chaque projet — le
+data-service applicatif ne fournit plus qu'une URL et des adapters de
+conversion.
+
+Fichiers : `projects/common/src/lib/restful-api/restful-api.service.ts` et
+`restful-api.model.ts`.
+
+---
+
+## Principe
+
+Un data-service classique (cf. `TaskDataService` dans [[Frontend]]) répète
+toujours les quatre mêmes blocs : construire l'URL, appeler `HttpClient`,
+convertir le DTO backend en modèle front, convertir le modèle front en
+payload backend. `RestfulApiService` absorbe ces quatre blocs :
+
+- l'**URL** est configurée une fois (`init({ url })`), les méthodes la
+  dérivent (collection / ressource / batch) ;
+- les **conversions** sont des fonctions passées une fois (`init({ get,
+  create, update, delete })`), surchargeables ponctuellement par appel ;
+- le service est bâti sur `HttpService` (cf. [[CommonAngular]]), donc aucune
+  duplication de la couche HTTP elle-même.
+
+Résultat côté applicatif : un data-service se réduit à une configuration et
+des méthodes d'une ligne.
+
+## Les deux types génériques
+
+| Type | Rôle | Exemple [[TaskManager]] |
+|---|---|---|
+| `TFront` | Modèle métier manipulé par les stores/composants | `ITask` (dates en `Date`) |
+| `TBack` | DTO réseau renvoyé/attendu par le data-server | `IBackTask` (dates en `string` ISO) |
+
+La convention `I*` / `IBack*` et la séparation modèle de store / DTO sont
+celles déjà en place dans [[Frontend]] (`*-back.model.ts` à côté du
+data-service).
+
+## Les adapters
+
+Trois types de fonctions de conversion, tous exportés par la lib :
+
+| Type | Signature | Utilisé par |
+|---|---|---|
+| `ResAdapter<TFront, TBack>` | `(back: TBack) => TFront` | toutes les lectures + la réponse des écritures |
+| `ReqAdapter<TIn, TOut>` | `(input: TIn) => TOut` | corps envoyé en `POST`/`PUT` |
+| `PageAdapter<TBack, TBackPage>` | `(backPage: TBackPage) => { items: TBack[]; meta: IPageMeta }` | enveloppe de pagination du `GET` collection |
+
+### Résolution en cascade
+
+Pour chaque appel, l'adapter effectif est le premier trouvé dans cet ordre :
+
+1. celui passé dans les **options de l'appel** (surcharge ponctuelle) ;
+2. celui configuré par **`init()`** pour cette opération ;
+3. un **passthrough** (`back as TFront`), utile quand `TFront` et `TBack`
+   ont la même forme et qu'aucune conversion n'est nécessaire.
+
+Les adapters sont donc **tous optionnels** : un backend dont les DTO
+correspondent déjà aux modèles front n'a besoin d'aucun adapter.
+
+## Configuration — `init()`
+
+```ts
+interface IRestfulApiConfig<TFront, TBack> {
+  url: string;                                  // URL de base, sans slash final
+  get?: ResAdapter<TFront, TBack>;              // getAll / getById / getByIds
+  create?: { reqAdapter?; resAdapter? };
+  update?: { reqAdapter?; resAdapter? };        // reqAdapter typé Partial<TFront> → Partial<TBack>
+  delete?: { resAdapter? };                     // seulement si le backend renvoie la ressource supprimée
+}
+```
+
+`init()` renvoie `this`, ce qui permet de chaîner à la construction. **Toute
+méthode CRUD appelée avant `init({ url })` lève une erreur explicite** plutôt
+que de construire une URL invalide silencieusement.
+
+## API
+
+Toutes les méthodes prennent leurs arguments requis d'abord, puis **un seul
+objet d'options final**, entièrement optionnel (`resAdapter`, `reqAdapter`,
+`pageAdapter`, `query`, plus les `headers`/`params` de `HttpClient`).
+
+| Méthode | Requête | Retour |
+|---|---|---|
+| `getAll(options?)` | `GET ${url}/` | `Observable<IPageResult<TFront>>` |
+| `getById(id, options?)` | `GET ${url}/${id}` | `Observable<TFront>` |
+| `getByIds(ids, options?)` | `POST ${url}/batch` avec `{ ids }` | `Observable<TFront[]>` |
+| `create(body, options?)` | `POST ${url}/` | `Observable<TFront>` |
+| `update(id, body, options?)` | `PUT ${url}/${id}` | `Observable<TFront>` |
+| `remove(id, options?)` | `DELETE ${url}/${id}` | `Observable<TFront \| void>` |
+
+### `getAll` renvoie toujours des métadonnées
+
+`getAll` renvoie **toujours** `{ items, meta }` (`IPageResult<TFront>`), que
+l'appel soit paginé ou non — une seule forme de réponse pour un seul
+endpoint, comme le font JSON:API et la plupart des API REST. Sans `query`,
+aucun query param de pagination n'est envoyé ; c'est le seul changement.
+
+```ts
+interface IPageMeta { total: number; page: number; pageSize: number; totalPages: number }
+interface IPageResult<TFront> { items: TFront[]; meta: IPageMeta }
+```
+
+### `getByIds` passe par POST
+
+Récupérer N ressources par leurs ids via `GET ?ids=1,2,3` bute sur la limite
+de longueur d'URL dès que la liste grossit. La méthode fait donc un `POST`
+sur une route dédiée (`${url}/batch`) avec `{ ids }` dans le body. Elle
+reste **sémantiquement une lecture** : elle utilise le `resAdapter` de `get`,
+jamais celui de `create`.
+
+> ⚠️ Aucune route `/batch` n'existe encore sur les backends Rust actuels
+> (cf. [[Routes]]) : cette méthode suppose son ajout côté backend.
+
+## Exemples d'implémentation
+
+### 1. Cas minimal — backend aligné sur le modèle front
+
+Aucun adapter : `TFront` et `TBack` ont la même forme, le passthrough suffit.
+
+```ts
+@Injectable({ providedIn: 'root' })
+export class TagDataService {
+  private api = new RestfulApiService<ITag, ITag>(inject(HttpService)).init({
+    url: `${environment.urls.dataServer}/tag`,
+  });
+
+  getAll(): Observable<IPageResult<ITag>> {
+    return this.api.getAll();
+  }
+
+  create(tag: ITag): Observable<ITag> {
+    return this.api.create(tag);
+  }
+
+  remove(id: string): Observable<ITag | void> {
+    return this.api.remove(id);
+  }
+}
+```
+
+### 2. Cas complet — adapter dédié (style [[TaskManager]])
+
+Le `TaskDataAdapter` existant (`fromBack` / `toBack` / `toBackPartial`) est
+simplement branché dans `init()` ; les méthodes du data-service deviennent
+des one-liners.
+
+```ts
+@Injectable({ providedIn: 'root' })
+export class TaskDataService {
+  private adapter = inject(TaskDataAdapter);
+
+  private api = new RestfulApiService<ITask, IBackTask>(inject(HttpService)).init({
+    url: `${environment.urls.dataServer}/task`,
+    get: (back) => this.adapter.fromBack(back),
+    create: {
+      reqAdapter: (task) => this.adapter.toBack(task),
+      resAdapter: (back) => this.adapter.fromBack(back),
+    },
+    update: {
+      reqAdapter: (changes) => this.adapter.toBackPartial(changes),
+      resAdapter: (back) => this.adapter.fromBack(back),
+    },
+  });
+
+  getAll(query?: IPageQuery): Observable<IPageResult<ITask>> {
+    return this.api.getAll({ query });
+  }
+
+  getById(id: string): Observable<ITask> {
+    return this.api.getById(id);
+  }
+
+  update(id: string, changes: Partial<ITask>): Observable<ITask> {
+    return this.api.update(id, changes);
+  }
+
+  delete(id: string): Observable<ITask | void> {
+    return this.api.remove(id);
+  }
+}
+```
+
+> L'ordre des champs compte : `adapter` doit être injecté **avant** `api`,
+> puisque les closures passées à `init()` le référencent.
+
+### 3. Pagination, filtres et tri
+
+`query` est sérialisé en query params : `page`, `pageSize`, un paramètre par
+entrée de `filters`, et `sort` sous la forme `champ:direction` séparés par
+des virgules.
+
+```ts
+this.api.getAll({
+  query: {
+    page: 2,
+    pageSize: 20,
+    filters: { status: 'todo', archived: false },
+    sort: [{ field: 'dueDate', direction: 'asc' }],
+  },
+});
+// → GET task/?page=2&pageSize=20&status=todo&archived=false&sort=dueDate:asc
+```
+
+La réponse est normalisée côté front :
+
+```ts
+{ items: ITask[], meta: { total: 42, page: 2, pageSize: 20, totalPages: 3 } }
+```
+
+### 4. Enveloppe backend différente — `pageAdapter`
+
+Par défaut, `getAll` suppose que le backend renvoie déjà `{ items, meta }`.
+Si l'enveloppe diffère, `pageAdapter` fait la traduction — c'est le seul
+endroit qui connaît la forme réseau de la pagination.
+
+```ts
+interface IBackTaskPage {
+  data: IBackTask[];
+  totalCount: number;
+  currentPage: number;
+  perPage: number;
+}
+
+const fromBackPage = (page: IBackTaskPage) => ({
+  items: page.data,
+  meta: {
+    total: page.totalCount,
+    page: page.currentPage,
+    pageSize: page.perPage,
+    totalPages: Math.ceil(page.totalCount / page.perPage),
+  },
+});
+
+getAll(query?: IPageQuery): Observable<IPageResult<ITask>> {
+  return this.api.getAll({ pageAdapter: fromBackPage, query });
+}
+```
+
+### 5. Chargement ciblé par ids
+
+À brancher sur `onLoadIdsChange$` du store d'entités (cf. `loadByIds` /
+`addIdToLoad` dans [[Frontend]]) :
+
+```ts
+getByIds(ids: string[]): Observable<ITask[]> {
+  return this.api.getByIds(ids);
+}
+// → POST task/batch   body : { ids: ['a', 'b', 'c'] }
+```
+
+### 6. Surcharge ponctuelle d'un adapter
+
+Un appel particulier peut ignorer l'adapter configuré, sans toucher à la
+configuration globale :
+
+```ts
+// Vue « light » : le backend renvoie un DTO allégé sur cette route
+this.api.getById(id, { resAdapter: (back) => this.adapter.fromBackSummary(back) });
+
+// Header spécifique à un appel
+this.api.getAll({ headers: { 'X-Include-Archived': 'true' } });
+```
+
+### 7. Création quand l'id est généré côté backend
+
+`create<TIn>` accepte une forme d'entrée différente de `TFront` (ici sans
+`id`). Dans ce cas, l'adapter configuré par `init({ create })` — typé pour
+`TFront` — ne correspond plus : il faut passer le `reqAdapter` explicitement.
+
+```ts
+create(task: Omit<ITask, 'id'>): Observable<ITask> {
+  return this.api.create(task, { reqAdapter: (t) => this.adapter.toBack(t) });
+}
+```
+
+### 8. Branchement dans un synchronizer NgRx
+
+Le découpage de [[Frontend]] reste inchangé : les composants parlent aux
+stores, les synchronizers parlent au réseau — `RestfulApiService` vit
+uniquement **sous** le data-service.
+
+```ts
+private tasksHandle(): void {
+  const events = this.tasksStore.getEvents();
+
+  events.onLoadRequest$
+    .pipe(
+      exhaustMap(() => this.taskData.getAll()),
+      takeUntil(this.destroy$),
+    )
+    .subscribe((page) => this.tasksStore.set(page.items));
+
+  events.onUpdate$
+    .pipe(
+      mergeMap(({ id, changes }) => this.taskData.update(id, changes)),
+      takeUntil(this.destroy$),
+    )
+    .subscribe((task) => this.tasksStore.update_withoutStore(task.id, task));
+}
+```
+
+## Pourquoi pas un singleton `providedIn: 'root'`
+
+`init()` stocke un état (URL + adapters) **par instance**. Or les types
+génériques TypeScript sont effacés à l'exécution : un service
+`providedIn: 'root'` ne donnerait qu'**une seule instance** partagée entre
+toutes les ressources — le `init()` des tâches écraserait celui des
+catégories.
+
+La classe est donc décorée `@Injectable()` **sans** `providedIn`, et chaque
+data-service construit sa propre instance :
+
+```ts
+private api = new RestfulApiService<ITask, IBackTask>(inject(HttpService)).init({ ... });
+```
+
+C'est aussi pourquoi `HttpService` est passé au constructeur au lieu d'un
+`inject()` en champ : l'instanciation manuelle peut avoir lieu hors contexte
+d'injection (notamment dans les tests), où `inject()` échouerait (NG0203).
+Une dérogation ESLint commentée couvre ce choix dans le fichier.
+
+## Conventions d'URL attendues côté backend
+
+Avec `init({ url: 'https://api.exemple/task' })` :
+
+| Opération | Requête |
+|---|---|
+| `getAll` | `GET https://api.exemple/task/` |
+| `create` | `POST https://api.exemple/task/` |
+| `getById` | `GET https://api.exemple/task/{id}` |
+| `update` | `PUT https://api.exemple/task/{id}` |
+| `remove` | `DELETE https://api.exemple/task/{id}` |
+| `getByIds` | `POST https://api.exemple/task/batch` |
+
+Le slash final sur la collection et son absence sur la ressource reprennent
+les conventions déjà en place côté data-server (cf. [[Routes]]). Une route
+qui sort de ce schéma (ex. `GET /task/{id}/history`) n'est pas du CRUD de
+cette ressource : elle relève d'un data-service dédié, avec sa propre
+instance et sa propre URL de base.
+
+## Tests
+
+`restful-api.service.spec.ts` couvre les deux modes de configuration (URL
+seule avec passthrough, et URL + adapters par opération), la surcharge
+ponctuelle par options, la sérialisation des query params, l'adaptation
+d'une enveloppe backend différente, le batch-get, et l'erreur levée quand
+`init({ url })` n'a pas été appelé. Le service est instancié directement
+(`new RestfulApiService(httpService)`), conformément à son usage réel, avec
+`HttpTestingController` pour les requêtes.
+
+## Liens
+
+- [[CommonAngular]] — la librairie qui héberge le service
+- [[Frontend]] — data-services, adapters et synchronizers côté [[TaskManager]]
+- [[Routes]] — routes réellement exposées par le backend Rust
