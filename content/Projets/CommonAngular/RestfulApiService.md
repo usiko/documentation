@@ -198,6 +198,7 @@ sens :
 | `update({ id, ...changes })` | extrait l'id → `PUT ${url}/${id}`, envoie le corps **sans** l'id |
 | `create(body)` | entrée `Omit<TFront, TIdKey>` : pas d'id, il est généré par le serveur |
 | `getById(id)` | tolère une réponse **sans** id et **réattache** celui de l'appel → `TFront` complet |
+| `remove(id)` | même réattachement sur l'`item` renvoyé, quand le backend renvoie la ressource supprimée |
 
 ```ts
 this.api.update({ id: '42', title: 'Modifiée' });
@@ -220,6 +221,9 @@ Conséquences :
   `{ ...task, id }` à refaire à chaque appel. Le backend n'a même pas besoin
   de répéter l'id dans sa réponse ; s'il le fait, c'est celui de l'appel qui
   fait foi, il ne peut pas contredire l'URL demandée.
+
+`remove` garde en revanche l'identifiant **seul** en argument, contrairement
+à `update` : une suppression n'a pas de corps, l'id suffit.
 
 `getAll` et `getByIds` renvoient à l'inverse des `TFront` **complets tels
 que le backend les fournit** : sur une collection, le service ne peut pas
