@@ -1,8 +1,9 @@
 #commonangular #angular #rest #api
 
 Service générique de la librairie `common` ([[CommonAngular]]) implémentant
-le **CRUD RESTful** d'une ressource, paramétré par deux types : le modèle
-front (`TFront`) et le DTO backend (`TBack`). Objectif : ne plus réécrire la
+le **CRUD RESTful** d'une ressource, paramétré par le modèle front
+(`TFront`), le DTO backend (`TBack`) et le nom du champ identifiant
+(`TIdKey`, `'id'` par défaut). Objectif : ne plus réécrire la
 même couche HTTP CRUD dans chaque data-service de chaque projet — le
 data-service applicatif ne fournit plus qu'une URL et des adapters de
 conversion.
@@ -29,12 +30,13 @@ payload backend. `RestfulApiService` absorbe ces quatre blocs :
 Résultat côté applicatif : un data-service se réduit à une configuration et
 des méthodes d'une ligne.
 
-## Les deux types génériques
+## Les types génériques
 
 | Type | Rôle | Exemple [[TaskManager]] |
 |---|---|---|
 | `TFront` | Modèle métier manipulé par les stores/composants | `ITask` (dates en `Date`) |
 | `TBack` | DTO réseau renvoyé/attendu par le data-server | `IBackTask` (dates en `string` ISO) |
+| `TIdKey` | Nom du champ identifiant, `'id'` par défaut | `'id'`, ou `'uuid'` sur une autre ressource |
 
 La convention `I*` / `IBack*` et la séparation modèle de store / DTO sont
 celles déjà en place dans [[Frontend]] (`*-back.model.ts` à côté du
@@ -47,7 +49,7 @@ Trois types de fonctions de conversion, tous exportés par la lib :
 | Type | Signature | Utilisé par |
 |---|---|---|
 | `ResAdapter<TFront, TBack>` | `(back: TBack) => TFront` | toutes les lectures + la réponse des écritures |
-| `ReqAdapter<TIn, TOut>` | `(input: TIn) => TOut` | corps envoyé en `POST`/`PUT` (`TOut` = `Partial<TBack>`) |
+| `ReqAdapter<TIn, TOut>` | `(input: TIn) => TOut` | corps envoyé en `POST`/`PUT` (`TOut` = `WritePayload<TBack, TIdKey>`) |
 | `PageAdapter<TBack, TBackPage>` | `(backPage: TBackPage) => { items: TBack[]; meta: IPageMeta }` | enveloppe de pagination du `GET` collection |
 
 ### Résolution en cascade
@@ -115,11 +117,12 @@ niveau de la ressource, l'appelant au niveau de sa vue.
 ## Configuration — `init()`
 
 ```ts
-interface IRestfulApiConfig<TFront, TBack> {
+interface IRestfulApiConfig<TFront, TBack, TIdKey = 'id'> {
   url: string;                                  // URL de base, sans slash final
+  idKey?: TIdKey;                               // nom du champ identifiant ('id' par défaut)
   get?: ResAdapter<TFront, TBack>;              // getAll / getById / getByIds
-  create?: { reqAdapter?; resAdapter? };        // reqAdapter : TFront → Partial<TBack>
-  update?: { reqAdapter?; resAdapter? };        // reqAdapter : Partial<TFront> → Partial<TBack>
+  create?: { reqAdapter?; resAdapter? };        // reqAdapter : Omit<TFront, TIdKey> → WritePayload
+  update?: { reqAdapter?; resAdapter? };        // reqAdapter : Partial<TFront> → WritePayload (sans id)
   delete?: { resAdapter? };                     // seulement si le backend renvoie la ressource supprimée
 }
 ```
@@ -137,10 +140,10 @@ objet d'options final**, entièrement optionnel (`resAdapter`, `reqAdapter`,
 | Méthode | Requête | Retour |
 |---|---|---|
 | `getAll(options?)` | `GET ${url}/` | `Observable<IPageResult<TFront>>` |
-| `getById(id, options?)` | `GET ${url}/${id}` | `Observable<Omit<TFront, 'id'>>` |
+| `getById(id, options?)` | `GET ${url}/${id}` | `Observable<TFront>` — id réattaché par le service |
 | `getByIds(ids, options?)` | `POST ${url}/batch` avec `{ ids }` | `Observable<TFront[]>` |
-| `create(body, options?)` | `POST ${url}/` | `Observable<TFront>` |
-| `update(id, body, options?)` | `PUT ${url}/${id}` | `Observable<TFront>` |
+| `create(body, options?)` | `POST ${url}/` | `Observable<TFront>` — body sans id |
+| `update({ id, ...changes }, options?)` | `PUT ${url}/${id}` | `Observable<TFront>` |
 | `remove(id, options?)` | `DELETE ${url}/${id}` | `Observable<IRemoveResult<TFront>>` |
 
 ### `getAll` renvoie toujours des métadonnées
@@ -166,8 +169,8 @@ Ce que dit la norme HTTP (RFC 9110), et ce que fait le service :
 | `DELETE` | `204 No Content` (courant), `200 OK` + représentation, ou `202 Accepted` | `Observable<IRemoveResult<TFront>>` — couvre les deux sans union |
 
 ```ts
-interface IRemoveResult<TFront> {
-  id: string | number; // toujours présent : écho de l'argument, pas une info serveur
+interface IRemoveResult<TFront, TIdKey = 'id'> {
+  id: IdOf<TFront, TIdKey>; // toujours présent : écho de l'argument, pas une info serveur
   item?: TFront;       // seulement si le backend a renvoyé la ressource ET qu'un resAdapter delete existe
 }
 ```
@@ -184,49 +187,68 @@ enchaîner sur la suppression dans le store sans refermer sur l'identifiant.
 > backend qui ne renvoie rien, le `resAdapter` serait appelé avec une
 > réponse vide.
 
-### L'identifiant est dans le path, jamais dans le body
+### Le service est seul responsable de l'identifiant
 
-`getById`, `update` et `remove` portent l'identifiant dans l'URL
-(`${url}/${id}`) ; le service ne le remet jamais dans le corps de la
-requête. Le dupliquer créerait une ambiguïté (que faire si `body.id` diffère
-de l'id de l'URL ?) — à noter que ce n'est pas universel, JSON:API impose au
-contraire l'id dans le body.
+Un id voyage dans l'URL, pas dans le corps. Plutôt que de laisser chaque
+appelant appliquer cette règle, le service fait la traduction dans les deux
+sens :
 
-Le corps envoyé par `create` et `update` est typé **`Partial<TBack>`**, pas
-`TBack` : une écriture n'envoie ni l'identifiant (porté par l'URL, ou généré
-par le serveur à la création) ni les champs calculés côté backend. C'est au
-`reqAdapter` de ne retenir que les champs éditables — le service ne peut pas
-filtrer l'id lui-même, il ne connaît pas le nom du champ identifiant de
-`TBack` (`id`, `_id`, `uuid`…).
+| Côté front | Ce que fait le service |
+|---|---|
+| `update({ id, ...changes })` | extrait l'id → `PUT ${url}/${id}`, envoie le corps **sans** l'id |
+| `create(body)` | entrée `Omit<TFront, TIdKey>` : pas d'id, il est généré par le serveur |
+| `getById(id)` | tolère une réponse **sans** id et **réattache** celui de l'appel → `TFront` complet |
 
 ```ts
-// toBackPartial ne mappe pas l'id : même si l'appelant le passe, il ne part pas sur le fil
-this.api.update('42', { id: '42', title: 'Modifiée' });
-// → PUT task/42   body : { title: 'Modifiée' }
+this.api.update({ id: '42', title: 'Modifiée' });
+// → PUT task/42   body : { title: 'Modifiée' }   (le reqAdapter ne voit même pas l'id)
+
+this.api.getById('42');
+// → GET task/42 ; réponse { title: 'Modifiée' } → émet { id: '42', title: 'Modifiée' }
 ```
 
-### Et dans les réponses ?
+Conséquences :
 
-Même logique côté lecture d'**une** ressource : `getById` renvoie un
-`Omit<TFront, 'id'>`, puisque l'appelant vient de fournir l'id dans l'URL.
+- **Un seul argument pour `update`**, au lieu d'un id + un partial à tenir
+  synchronisés. L'id ne peut plus diverger entre l'URL et le corps.
+- **Le `reqAdapter` ne voit jamais l'identifiant** : le service l'a retiré
+  avant de l'appeler. L'adapter n'a donc aucun moyen de le renvoyer par
+  inadvertance, et le corps est typé `WritePayload<TBack, TIdKey>` =
+  `Partial<Omit<TBack, TIdKey>>`.
+- **`getById` renvoie un `TFront` complet**, directement utilisable par un
+  store d'entités indexé par id (`withEntities`, cf. [[Frontend]]) — pas de
+  `{ ...task, id }` à refaire à chaque appel. Le backend n'a même pas besoin
+  de répéter l'id dans sa réponse ; s'il le fait, c'est celui de l'appel qui
+  fait foi, il ne peut pas contredire l'URL demandée.
 
-⚠️ Avec une différence de nature importante : sur le payload d'écriture, le
-`Omit` **contraint ce qu'on construit** (TypeScript refuse un littéral qui
-porte l'id, et l'objet envoyé ne l'a réellement pas). Sur la réponse, il ne
-fait que **décrire ce qu'on reçoit** : le backend renvoie l'id, rien n'est
-retiré à l'exécution, l'objet émis le contient toujours. Le type dit « ne
-t'appuie pas dessus ici », il ne supprime rien — supprimer une donnée
-renvoyée par le serveur serait pire que la redondance.
+`getAll` et `getByIds` renvoient à l'inverse des `TFront` **complets tels
+que le backend les fournit** : sur une collection, le service ne peut pas
+réattacher quoi que ce soit — seul l'id porté par chaque ressource dit
+lequel est lequel.
 
-Conséquence pratique : pour alimenter un store d'entités indexé par id
-(`withEntities`, cf. [[Frontend]]), il faut reconstituer le modèle :
+> À noter : « pas d'id dans le corps » est une convention, pas une règle
+> RFC — JSON:API impose au contraire l'id dans le body.
+
+### Quand l'identifiant ne s'appelle pas `id`
+
+Le nom du champ identifiant est un paramètre générique (`TIdKey`), `'id'`
+par défaut, à déclarer avec la config :
 
 ```ts
-this.api.getById(id).subscribe((task) => this.tasksStore.add({ ...task, id }));
+private api = new RestfulApiService<IDevice, IBackDevice, 'uuid'>(
+  inject(HttpService),
+  inject(DestroyRef),
+).init({
+  url: `${environment.urls.dataServer}/device`,
+  idKey: 'uuid',
+});
+
+this.api.update({ uuid: 'abc', label: 'B' }); // → PUT device/abc   body : { label: 'B' }
 ```
 
-`getAll` et `getByIds` gardent à l'inverse des `TFront` **complets** : sur
-une collection, l'id est le seul moyen de savoir quel élément est lequel.
+Sans ce générique, un modèle clé par `uuid` ne compilerait pas : le type
+« partial dont l'identifiant est obligatoire » a besoin de connaître le nom
+de ce champ.
 
 ### `getByIds` passe par POST
 
@@ -297,12 +319,12 @@ export class TaskDataService {
     return this.api.getAll({ query });
   }
 
-  getById(id: string): Observable<Omit<ITask, 'id'>> {
-    return this.api.getById(id);
+  getById(id: string): Observable<ITask> {
+    return this.api.getById(id); // ITask complet, id réattaché par le service
   }
 
-  update(id: string, changes: Partial<ITask>): Observable<ITask> {
-    return this.api.update(id, changes);
+  update(changes: UpdatePayload<ITask, 'id'>): Observable<ITask> {
+    return this.api.update(changes); // { id, ...champs à modifier }
   }
 
   delete(id: string): Observable<IRemoveResult<ITask>> {
@@ -423,7 +445,7 @@ private tasksHandle(): void {
 
   events.onUpdate$
     .pipe(
-      mergeMap(({ id, changes }) => this.taskData.update(id, changes)),
+      mergeMap(({ id, changes }) => this.taskData.update({ id, ...changes })),
       takeUntil(this.destroy$),
     )
     .subscribe((task) => this.tasksStore.update_withoutStore(task.id, task));

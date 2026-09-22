@@ -105,6 +105,10 @@ adapters de conversion.
   `remove` renvoie `{ id, item? }` — forme unique qui couvre aussi bien le
   `204 No Content` que le `200 OK` + représentation autorisés par la norme,
   sans union à caster.
+- **Le service gère seul l'identifiant** : `update({ id, ...changes })`
+  extrait l'id pour l'URL et l'ôte du corps, `getById(id)` réattache celui
+  de l'appel à la réponse (qui n'a donc pas besoin de le porter). Le nom du
+  champ est paramétrable (`init({ idKey: 'uuid' })`).
 - Chaque appel est piloté par `take(1)` + `takeUntil(destroy$)` : une seule
   réponse par requête, annulation de la requête en vol quand le propriétaire
   est détruit (`DestroyRef` passé au constructeur, ou `ngOnDestroy` si le
