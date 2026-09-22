@@ -141,7 +141,7 @@ objet d'options final**, entièrement optionnel (`resAdapter`, `reqAdapter`,
 | `getByIds(ids, options?)` | `POST ${url}/batch` avec `{ ids }` | `Observable<TFront[]>` |
 | `create(body, options?)` | `POST ${url}/` | `Observable<TFront>` |
 | `update(id, body, options?)` | `PUT ${url}/${id}` | `Observable<TFront>` |
-| `remove(id, options?)` | `DELETE ${url}/${id}` | `Observable<TFront \| void>` |
+| `remove(id, options?)` | `DELETE ${url}/${id}` | `Observable<IRemoveResult<TFront>>` |
 
 ### `getAll` renvoie toujours des métadonnées
 
@@ -154,6 +154,35 @@ aucun query param de pagination n'est envoyé ; c'est le seul changement.
 interface IPageMeta { total: number; page: number; pageSize: number; totalPages: number }
 interface IPageResult<TFront> { items: TFront[]; meta: IPageMeta }
 ```
+
+### Ce que renvoient `create`, `update` et `remove`
+
+Ce que dit la norme HTTP (RFC 9110), et ce que fait le service :
+
+| Verbe | Norme | Service |
+|---|---|---|
+| `POST` (create) | `201 Created` + header `Location`, body avec la représentation créée | `Observable<TFront>` — la ressource créée (elle porte l'id et les champs générés serveur) |
+| `PUT` (update) | `200 OK` **ou** `204 No Content`, les deux conformes | `Observable<TFront>` — la représentation canonique renvoyée par le backend |
+| `DELETE` | `204 No Content` (courant), `200 OK` + représentation, ou `202 Accepted` | `Observable<IRemoveResult<TFront>>` — couvre les deux sans union |
+
+```ts
+interface IRemoveResult<TFront> {
+  id: string | number; // toujours présent : écho de l'argument, pas une info serveur
+  item?: TFront;       // seulement si le backend a renvoyé la ressource ET qu'un resAdapter delete existe
+}
+```
+
+`remove` renvoyait auparavant `Observable<TFront | void>`, une union qui
+obligeait l'appelant à caster. La forme `{ id, item? }` est stable quel que
+soit le backend : sur un `204` on obtient `{ id }`, sur un `200` avec
+représentation `{ id, item }`. L'`id` étant toujours là, un synchronizer peut
+enchaîner sur la suppression dans le store sans refermer sur l'identifiant.
+
+> `create` et `update` **supposent** que le backend renvoie la
+> représentation. C'est le cas des routes actuelles (cf. [[Routes]]) et le
+> choix majoritaire, mais la norme autorise un `204` sur `PUT` : contre un
+> backend qui ne renvoie rien, le `resAdapter` serait appelé avec une
+> réponse vide.
 
 ### `getByIds` passe par POST
 
@@ -187,7 +216,7 @@ export class TagDataService {
     return this.api.create(tag);
   }
 
-  remove(id: string): Observable<ITag | void> {
+  remove(id: string): Observable<IRemoveResult<ITag>> {
     return this.api.remove(id);
   }
 }
@@ -232,7 +261,7 @@ export class TaskDataService {
     return this.api.update(id, changes);
   }
 
-  delete(id: string): Observable<ITask | void> {
+  delete(id: string): Observable<IRemoveResult<ITask>> {
     return this.api.remove(id);
   }
 }

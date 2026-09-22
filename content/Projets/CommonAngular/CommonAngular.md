@@ -101,6 +101,10 @@ adapters de conversion.
   pagination/filtres/tri.
 - `getByIds(ids)` passe par `POST ${url}/batch` plutôt qu'un `GET
   ?ids=…`, pour ne pas buter sur la limite de longueur d'URL.
+- `create`/`update` renvoient la ressource (`Observable<TFront>`) ;
+  `remove` renvoie `{ id, item? }` — forme unique qui couvre aussi bien le
+  `204 No Content` que le `200 OK` + représentation autorisés par la norme,
+  sans union à caster.
 - Chaque appel est piloté par `take(1)` + `takeUntil(destroy$)` : une seule
   réponse par requête, annulation de la requête en vol quand le propriétaire
   est détruit (`DestroyRef` passé au constructeur, ou `ngOnDestroy` si le
