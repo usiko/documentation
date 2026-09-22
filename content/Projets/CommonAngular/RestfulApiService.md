@@ -137,7 +137,7 @@ objet d'options final**, entièrement optionnel (`resAdapter`, `reqAdapter`,
 | Méthode | Requête | Retour |
 |---|---|---|
 | `getAll(options?)` | `GET ${url}/` | `Observable<IPageResult<TFront>>` |
-| `getById(id, options?)` | `GET ${url}/${id}` | `Observable<TFront>` |
+| `getById(id, options?)` | `GET ${url}/${id}` | `Observable<Omit<TFront, 'id'>>` |
 | `getByIds(ids, options?)` | `POST ${url}/batch` avec `{ ids }` | `Observable<TFront[]>` |
 | `create(body, options?)` | `POST ${url}/` | `Observable<TFront>` |
 | `update(id, body, options?)` | `PUT ${url}/${id}` | `Observable<TFront>` |
@@ -204,6 +204,29 @@ filtrer l'id lui-même, il ne connaît pas le nom du champ identifiant de
 this.api.update('42', { id: '42', title: 'Modifiée' });
 // → PUT task/42   body : { title: 'Modifiée' }
 ```
+
+### Et dans les réponses ?
+
+Même logique côté lecture d'**une** ressource : `getById` renvoie un
+`Omit<TFront, 'id'>`, puisque l'appelant vient de fournir l'id dans l'URL.
+
+⚠️ Avec une différence de nature importante : sur le payload d'écriture, le
+`Omit` **contraint ce qu'on construit** (TypeScript refuse un littéral qui
+porte l'id, et l'objet envoyé ne l'a réellement pas). Sur la réponse, il ne
+fait que **décrire ce qu'on reçoit** : le backend renvoie l'id, rien n'est
+retiré à l'exécution, l'objet émis le contient toujours. Le type dit « ne
+t'appuie pas dessus ici », il ne supprime rien — supprimer une donnée
+renvoyée par le serveur serait pire que la redondance.
+
+Conséquence pratique : pour alimenter un store d'entités indexé par id
+(`withEntities`, cf. [[Frontend]]), il faut reconstituer le modèle :
+
+```ts
+this.api.getById(id).subscribe((task) => this.tasksStore.add({ ...task, id }));
+```
+
+`getAll` et `getByIds` gardent à l'inverse des `TFront` **complets** : sur
+une collection, l'id est le seul moyen de savoir quel élément est lequel.
 
 ### `getByIds` passe par POST
 
@@ -274,7 +297,7 @@ export class TaskDataService {
     return this.api.getAll({ query });
   }
 
-  getById(id: string): Observable<ITask> {
+  getById(id: string): Observable<Omit<ITask, 'id'>> {
     return this.api.getById(id);
   }
 
