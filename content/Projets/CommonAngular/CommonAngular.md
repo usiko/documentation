@@ -92,7 +92,7 @@ adapters de conversion.
 
 - `init({ url, get, create, update, delete })` configure **une fois** l'URL
   de base et les adapters par opération ; les appels se réduisent ensuite à
-  `this.api.getAll()`, `this.api.create(body)`, `this.api.update(id, changes)`…
+  `this.api.getAll()`, `this.api.create(body)`, `this.api.update({ id, ...changes })`…
 - Tous les adapters sont **optionnels** — résolution en cascade : options de
   l'appel → `init()` → passthrough (quand `TFront` et `TBack` ont la même
   forme).
