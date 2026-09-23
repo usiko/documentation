@@ -28,6 +28,12 @@ Quatre modules mergés dans `master` :
 - **`config/`** — `ConfigService<T>` (voir §Services partagés).
 - **`http/`** — `HttpService` (voir §Services partagés).
 
+Un cinquième module est en cours de revue :
+
+- **`restful-api/`** — `RestfulApiService<TFront, TBack>`, CRUD RESTful
+  générique bâti sur `HttpService` (voir §Services partagés et
+  [[RestfulApiService]]).
+
 ESLint (`@angular-eslint`) et une CI GitHub Actions (lint + tests) sont en
 place, ainsi qu'un pipeline de publication automatique vers une branche
 `dist` (voir §Distribution).
@@ -75,6 +81,48 @@ const userSchema: JSONSchemaType<IUser> = {
 httpService.get<IUser>('/api/users/1', userSchema).subscribe(/* IUser garanti valide, ou erreur */);
 httpService.get<IUser>('/api/users/1'); // sans schéma : comportement HttpClient classique
 ```
+
+### `RestfulApiService<TFront, TBack>`
+
+CRUD RESTful générique d'une ressource, paramétré par le modèle front
+(`TFront`) et le DTO backend (`TBack`), bâti au-dessus d'`HttpService`.
+Évite de réécrire la même couche HTTP CRUD dans chaque data-service de
+chaque projet : le data-service applicatif ne fournit plus qu'une URL et des
+adapters de conversion.
+
+- `init({ url, get, create, update, delete })` configure **une fois** l'URL
+  de base et les adapters par opération ; les appels se réduisent ensuite à
+  `this.api.getAll()`, `this.api.create(body)`, `this.api.update({ id, ...changes })`…
+- Tous les adapters sont **optionnels** — résolution en cascade : options de
+  l'appel → `init()` → passthrough (quand `TFront` et `TBack` ont la même
+  forme).
+- `getAll()` renvoie **toujours** `{ items, meta }`, paginé ou non (une
+  seule forme de réponse pour un seul endpoint) ; `query` porte
+  pagination/filtres/tri.
+- `getByIds(ids)` passe par `POST ${url}/batch` plutôt qu'un `GET
+  ?ids=…`, pour ne pas buter sur la limite de longueur d'URL.
+- `create`/`update` renvoient la ressource (`Observable<TFront>`) ;
+  `remove` renvoie `{ id, item? }` — forme unique qui couvre aussi bien le
+  `204 No Content` que le `200 OK` + représentation autorisés par la norme,
+  sans union à caster.
+- `init({ headers })` pose des en-têtes communs à tous les appels d'une
+  ressource, fusionnés clé par clé avec ceux d'un appel. Réservé au
+  spécifique-ressource : le transverse (authentification, langue) reste du
+  ressort d'un `HttpInterceptorFn`.
+- **Le service gère seul l'identifiant** : `update({ id, ...changes })`
+  extrait l'id pour l'URL et l'ôte du corps, `getById(id)` réattache celui
+  de l'appel à la réponse (qui n'a donc pas besoin de le porter). Le nom du
+  champ est paramétrable (`init({ idKey: 'uuid' })`).
+- Chaque appel est piloté par `take(1)` + `takeUntil(destroy$)` : une seule
+  réponse par requête, annulation de la requête en vol quand le propriétaire
+  est détruit (`DestroyRef` passé au constructeur, ou `ngOnDestroy` si le
+  service est fourni par DI). Sans remplacer le `takeUntilDestroyed()` de
+  l'appelant à la souscription.
+- **Pas** `providedIn: 'root'` : `init()` stocke un état par instance et les
+  génériques sont effacés à l'exécution, donc une instance par ressource
+  (`new RestfulApiService<ITask, IBackTask>(inject(HttpService)).init({…})`).
+
+Page dédiée avec exemples d'implémentation : [[RestfulApiService]].
 
 ### Dépendance AJV et build ng-packagr
 
@@ -292,7 +340,8 @@ common-angular/
         │       ├── auth/      # AuthTokenService, JwtSessionService, interceptors, guard, AUTH_CONFIG
         │       ├── charts/    # LineChart/DonutChart/HeatmapComponent
         │       ├── config/    # ConfigService<T>
-        │       └── http/      # HttpService
+        │       ├── http/      # HttpService
+        │       └── restful-api/  # RestfulApiService<TFront, TBack> (CRUD générique)
         └── tsconfig.lib*.json / tsconfig.spec.json
 ```
 
@@ -326,6 +375,8 @@ ng generate component nom --project=common  # générer un composant/service dan
   premier merge sur `master`.
 
 ## Liens
+- [[RestfulApiService]] — CRUD RESTful générique : API complète et exemples
+  d'implémentation
 - [[TaskManager]] — origine du `ConfigService` et des composants `charts/`
   repris dans cette librairie
 - mongoManager, falidex-dashboard — projets front consommateurs potentiels
