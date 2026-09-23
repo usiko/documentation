@@ -105,6 +105,10 @@ adapters de conversion.
   `remove` renvoie `{ id, item? }` — forme unique qui couvre aussi bien le
   `204 No Content` que le `200 OK` + représentation autorisés par la norme,
   sans union à caster.
+- `init({ headers })` pose des en-têtes communs à tous les appels d'une
+  ressource, fusionnés clé par clé avec ceux d'un appel. Réservé au
+  spécifique-ressource : le transverse (authentification, langue) reste du
+  ressort d'un `HttpInterceptorFn`.
 - **Le service gère seul l'identifiant** : `update({ id, ...changes })`
   extrait l'id pour l'URL et l'ôte du corps, `getById(id)` réattache celui
   de l'appel à la réponse (qui n'a donc pas besoin de le porter). Le nom du

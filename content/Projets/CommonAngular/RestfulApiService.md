@@ -120,6 +120,7 @@ niveau de la ressource, l'appelant au niveau de sa vue.
 interface IRestfulApiConfig<TFront, TBack, TIdKey = 'id'> {
   url: string;                                  // URL de base, sans slash final
   idKey?: TIdKey;                               // nom du champ identifiant ('id' par défaut)
+  headers?: HttpHeaders | Record<…>;            // en-têtes communs à tous les appels de la ressource
   get?: ResAdapter<TFront, TBack>;              // getAll / getById / getByIds
   create?: { reqAdapter?; resAdapter? };        // reqAdapter : Omit<TFront, TIdKey> → WritePayload
   update?: { reqAdapter?; resAdapter? };        // reqAdapter : Partial<TFront> → WritePayload (sans id)
@@ -254,6 +255,27 @@ this.api.update({ uuid: 'abc', label: 'B' }); // → PUT device/abc   body : { l
 Sans ce générique, un modèle clé par `uuid` ne compilerait pas : le type
 « partial dont l'identifiant est obligatoire » a besoin de connaître le nom
 de ce champ.
+
+### En-têtes : trois cas, un seul à traiter ici
+
+| Besoin | Où le traiter |
+|---|---|
+| En-tête sur **un appel précis** (`If-Match`, `X-Request-Id`…) | options de l'appel : `this.api.getAll({ headers: { … } })` |
+| En-tête **transverse à l'application** (authentification, langue, tenant) | un `HttpInterceptorFn` — cf. le module `auth/` dans [[CommonAngular]] ; le répéter par data-service serait à la fois dupliqué et faillible |
+| En-tête propre à **une ressource**, sur **tous** ses appels | `init({ headers })` |
+
+```ts
+.init({
+  url: `${environment.urls.dataServer}/task`,
+  headers: { 'X-Api-Version': '2' }, // sur tous les appels de /task
+});
+
+this.api.getAll({ headers: { 'X-Request-Id': id } });
+// → en-têtes envoyés : X-Api-Version: 2 + X-Request-Id
+```
+
+La fusion se fait **clé par clé**, l'appel l'emportant sur la config à clé
+égale — même cascade que pour les adapters.
 
 ### `getByIds` passe par POST
 
