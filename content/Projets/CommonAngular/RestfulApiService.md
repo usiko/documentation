@@ -49,7 +49,7 @@ Trois types de fonctions de conversion, tous exportés par la lib :
 | Type | Signature | Utilisé par |
 |---|---|---|
 | `ResAdapter<TFront, TBack>` | `(back: TBack) => TFront` | toutes les lectures + la réponse des écritures |
-| `ReqAdapter<TIn, TOut>` | `(input: TIn) => TOut` | corps envoyé en `POST`/`PUT` (`TOut` = `WritePayload<TBack, TIdKey>`) |
+| `ReqAdapter<TIn, TOut>` | `(input: TIn) => TOut` | corps envoyé en `POST`/`PUT` — `TIn` = `Omit<TFront, TIdKey>` (create) ou `Partial<TFront>` sans id (update), `TOut` = `WritePayload<TBack, TIdKey>` |
 | `PageAdapter<TBack, TBackPage>` | `(backPage: TBackPage) => { items: TBack[]; meta: IPageMeta }` | enveloppe de pagination du `GET` collection |
 
 ### Résolution en cascade
@@ -144,7 +144,7 @@ objet d'options final**, entièrement optionnel (`resAdapter`, `reqAdapter`,
 | `getByIds(ids, options?)` | `POST ${url}/batch` avec `{ ids }` | `Observable<TFront[]>` |
 | `create(body, options?)` | `POST ${url}/` | `Observable<TFront>` — body sans id |
 | `update({ id, ...changes }, options?)` | `PUT ${url}/${id}` | `Observable<TFront>` |
-| `remove(id, options?)` | `DELETE ${url}/${id}` | `Observable<IRemoveResult<TFront>>` |
+| `remove(id, options?)` | `DELETE ${url}/${id}` | `Observable<IRemoveResult<TFront, TIdKey>>` — `item` id réattaché |
 
 ### `getAll` renvoie toujours des métadonnées
 
@@ -175,11 +175,12 @@ interface IRemoveResult<TFront, TIdKey = 'id'> {
 }
 ```
 
-`remove` renvoyait auparavant `Observable<TFront | void>`, une union qui
-obligeait l'appelant à caster. La forme `{ id, item? }` est stable quel que
-soit le backend : sur un `204` on obtient `{ id }`, sur un `200` avec
-représentation `{ id, item }`. L'`id` étant toujours là, un synchronizer peut
-enchaîner sur la suppression dans le store sans refermer sur l'identifiant.
+Cette forme évite l'union `TFront | void` — qui obligerait l'appelant à
+caster à chaque usage — au profit d'un résultat stable quel que soit le
+backend : sur un `204` on obtient `{ id }`, sur un `200` avec représentation
+`{ id, item }` (l'`item` recevant l'id de l'appel, comme sur `getById`).
+L'`id` étant toujours là, un synchronizer peut enchaîner sur la suppression
+dans le store sans refermer sur l'identifiant.
 
 > `create` et `update` **supposent** que le backend renvoie la
 > représentation. C'est le cas des routes actuelles (cf. [[Routes]]) et le
@@ -282,8 +283,8 @@ export class TagDataService {
     return this.api.getAll();
   }
 
-  create(tag: ITag): Observable<ITag> {
-    return this.api.create(tag);
+  create(tag: Omit<ITag, 'id'>): Observable<ITag> {
+    return this.api.create(tag); // l'id est généré par le serveur
   }
 
   remove(id: string): Observable<IRemoveResult<ITag>> {
@@ -418,16 +419,31 @@ this.api.getById(id, { resAdapter: (back) => this.adapter.fromBackSummary(back) 
 this.api.getAll({ headers: { 'X-Include-Archived': 'true' } });
 ```
 
-### 7. Création quand l'id est généré côté backend
+### 7. Ressource identifiée autrement que par `id`
 
-`create<TIn>` accepte une forme d'entrée différente de `TFront` (ici sans
-`id`). Dans ce cas, l'adapter configuré par `init({ create })` — typé pour
-`TFront` — ne correspond plus : il faut passer le `reqAdapter` explicitement.
+Le nom du champ identifiant se déclare en troisième générique **et** dans la
+config ; tout le reste suit (URL, extraction sur `update`, réattachement sur
+`getById`/`remove`).
 
 ```ts
-create(task: Omit<ITask, 'id'>): Observable<ITask> {
-  return this.api.create(task, { reqAdapter: (t) => this.adapter.toBack(t) });
+@Injectable({ providedIn: 'root' })
+export class DeviceDataService {
+  private api = new RestfulApiService<IDevice, IBackDevice, 'uuid'>(
+    inject(HttpService),
+    inject(DestroyRef),
+  ).init({
+    url: `${environment.urls.dataServer}/device`,
+    idKey: 'uuid',
+    get: (back) => this.adapter.fromBack(back),
+  });
+
+  update(changes: UpdatePayload<IDevice, 'uuid'>): Observable<IDevice> {
+    return this.api.update(changes);
+  }
 }
+
+this.deviceData.update({ uuid: 'abc', label: 'B' });
+// → PUT device/abc   body : { label: 'B' }
 ```
 
 ### 8. Branchement dans un synchronizer NgRx
@@ -468,7 +484,10 @@ La classe est donc décorée `@Injectable()` **sans** `providedIn`, et chaque
 data-service construit sa propre instance :
 
 ```ts
-private api = new RestfulApiService<ITask, IBackTask>(inject(HttpService)).init({ ... });
+private api = new RestfulApiService<ITask, IBackTask>(
+  inject(HttpService),
+  inject(DestroyRef),
+).init({ ... });
 ```
 
 C'est aussi pourquoi `HttpService` est passé au constructeur au lieu d'un
@@ -497,16 +516,28 @@ instance et sa propre URL de base.
 
 ## Tests
 
-`restful-api.service.spec.ts` couvre les deux modes de configuration (URL
-seule avec passthrough, et URL + adapters par opération), la surcharge
-ponctuelle par options, la sérialisation des query params, l'adaptation
-d'une enveloppe backend différente, le batch-get, l'erreur levée quand
-`init({ url })` n'a pas été appelé, et le cycle de vie (complétion après une
-émission, annulation via `DestroyRef` et via `ngOnDestroy`, appel tardif qui
-ne part pas). Le service est instancié directement
-(`new RestfulApiService(httpService)`), conformément à son usage réel, avec
-`HttpTestingController` pour les requêtes — `verify({ ignoreCancelled: true })`
-puisque les tests de destruction laissent volontairement une requête annulée.
+`restful-api.service.spec.ts` (100 tests) couvre :
+
+- les deux modes de configuration : URL seule avec passthrough, et URL +
+  adapters par opération ;
+- la surcharge ponctuelle d'un adapter par les options d'appel ;
+- la sérialisation des query params (pagination/filtres/tri) et l'adaptation
+  d'une enveloppe backend différente via `pageAdapter` ;
+- **la gestion de l'identifiant** : extraction depuis le corps d'`update`
+  (et absence de l'id dans le body *comme* dans l'argument reçu par le
+  `reqAdapter`), réattachement sur `getById` et sur l'`item` de `remove`
+  quand la réponse ne le porte pas, et le même jeu sur une ressource
+  identifiée par `uuid` ;
+- le batch-get, les trois formes de réponse de `remove` (204, 200 avec
+  représentation, resAdapter configuré ou ponctuel) ;
+- l'erreur levée quand `init({ url })` n'a pas été appelé ;
+- le cycle de vie : complétion après une émission, annulation via
+  `DestroyRef` et via `ngOnDestroy`, appel tardif qui ne part pas.
+
+Le service est instancié directement (`new RestfulApiService(httpService)`),
+conformément à son usage réel, avec `HttpTestingController` pour les
+requêtes — `verify({ ignoreCancelled: true })` puisque les tests de
+destruction laissent volontairement une requête annulée.
 
 ## Liens
 
